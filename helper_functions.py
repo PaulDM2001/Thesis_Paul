@@ -111,8 +111,119 @@ def compute_equilibrium(l, c, m, W, a, pre_converted=None, verbose=False):
         return ""
 
 # TODO: consider edge cases 
-    
+
+
+def compute_equilibrium_multiple_thresholds(l, c, m, W, a):
+    # Parameters and help variables
+    M = 10**3
+    n = l.shape[0]
+    k = l.shape[1]
+    I_min_W = np.broadcast_to(np.identity(n)[None, ...], (n,n,k)) - W
+
+    # Check fairness:
+    for i in range(n):
+        if all(l[i, :] == c[i, :] / m[i, :]):
+            case = "Fair case"
+        else:
+            case = "Not fair case"
+            break
+    print(case)
+
+    # Set up model
+    model = gp.Model("CoCo-Model-MultiThreshold")
+    model.setParam(gp.GRB.Param.OutputFlag, 0)  
+    if case != "fair":
+        model.setParam(gp.GRB.Param.PoolSearchMode, 2)          # In the case l > c/m, model admits multiple solutions
+        model.setParam(gp.GRB.Param.PoolSolutions, 3**n)        # Note: 3**n is an upperbound on the number of solutions   
+
+    # Model variables
+    s = model.addVars(n, vtype=gp.GRB.CONTINUOUS, lb=-gp.GRB.INFINITY)
+    delta_B = model.addVars(n, vtype=gp.GRB.BINARY, lb=0, ub=1)
+    delta_G = model.addVars(n, k ,vtype=gp.GRB.BINARY, lb=0, ub=1)
+    delta_H = model.addVars(n, vtype=gp.GRB.BINARY, lb=0, ub=1)
+
+    delta_Ct = model.addVars(n, k, vtype=gp.GRB.BINARY, lb=0, ub=1)
+    delta_Ht = model.addVars(n, k, vtype=gp.GRB.BINARY, lb=0, ub=1)
+
+    mu_Bt = model.addVars(n, k, vtype=gp.GRB.CONTINUOUS, lb=-gp.GRB.INFINITY)
+    mu_Ct = model.addVars(n, k, vtype=gp.GRB.CONTINUOUS, lb=-gp.GRB.INFINITY)
+
+    # Objective function 
+    model.setObjective(0, gp.GRB.MAXIMIZE) #gp.quicksum(delta_H[i] for i in range(n)), gp.GRB.MAXIMIZE)      # Note: objective is to optimize healthy banks, can also be set to a constant
+
+    # Constraints
+    for i in range(n):
+        # Constraint on deltas
+        model.addConstr(delta_B[i] + gp.quicksum(delta_G[i,t] for t in range(k)) + delta_H[i] == 1)  
+        for t in range(k): 
+            model.addConstr(delta_Ct[i, t] == gp.quicksum(delta_G[i,u] for u in range(t,k)))
+            model.addConstr(delta_Ht[i, t] == delta_H[i] + gp.quicksum(delta_G[i,u] for u in range(t)))
+
+        # Constraint on partition consistency
+        model.addConstr(s[i] <= M * (1 - delta_B[i]))
+        model.addConstr(s[i] >= -M * (1 - delta_G[i,k-1]))
+        model.addConstr(s[i] <= l[i,(k-1)] * delta_G[i,(k-1)] + M * (1 - delta_G[i,(k-1)]))
+        for t in range(k-1):
+            model.addConstr(s[i] >= l[i, t+1]*delta_G[i,t] - M * (1 - delta_G[i,t]) )
+            model.addConstr(s[i] <= l[i, t]*delta_G[i,t] + M * (1 - delta_G[i,t])) 
+        model.addConstr(s[i] >= l[i,0] * delta_H[i] - M * (1 - delta_H[i]))
+
+        # Auxiliary variables 
+        for t in range(k):
+            model.addConstr(mu_Bt[i,t] >= -M * (1 - delta_B[i]) + m[i,t]*s[i])
+            model.addConstr(mu_Bt[i,t] <= M * (1 - delta_B[i]) + m[i,t]*s[i])
+            model.addConstr(mu_Bt[i,t] >= -M * delta_B[i])
+            model.addConstr(mu_Bt[i,t] <= M * delta_B[i])
+            
+            model.addConstr(mu_Ct[i,t] >= -M * (1 - delta_Ct[i,t]) + m[i,t]*s[i] )
+            model.addConstr(mu_Ct[i,t] <= M * (1 - delta_Ct[i,t]) + m[i,t]*s[i])
+            model.addConstr(mu_Ct[i,t] >= -M * delta_Ct[i,t])
+            model.addConstr(mu_Ct[i,t] <= M * delta_Ct[i,t])
+        # (B,C,H)-equilibrium constraint
+        model.addConstr(a[i] == s[i] + gp.quicksum(mu_Bt[i,t] for t in range(k)) + gp.quicksum(gp.quicksum(I_min_W[t,i,j] * (mu_Ct[j,t] + c[j,t] * delta_Ht[j,t]) for j in range(n)) for t in range(k)))
+                        
+    # Optimizes
+    model.optimize() 
+
+    # Solutions
+    if model.status == gp.GRB.OPTIMAL:
+        n_sol = model.SolCount
+        for i in range(n_sol):
+            model.setParam(gp.GRB.Param.SolutionNumber, i)
+            # Return partition and stock prices
+            B = []
+            G = 0
+            G_1 = []
+            G_2 = [] 
+            H = []
+            s_list = []
+            for i in range(n):
+                s_list.append(s[i].Xn)
+                if delta_B[i].Xn > 0.999:
+                    B.append(i)
+                elif delta_H[i].Xn > 0.999:
+                    H.append(i)
+                elif delta_G[i,0].Xn > 0.999:
+                    G_1.append(i)
+                elif delta_G[i,1].Xn > 0.999:
+                    G_2.append(i)
+            print(f"B: {B}, G2: {G_2}, G1: {G_1}, H: {H}, stock prices: {np.round(np.array(s_list),4)}")
+        
+        return B, G, H, s_list
+        
+    if model.status == gp.GRB.INFEASIBLE:
+        return "Model is infeasible"
+
+# l = np.array([[10, 6], [10, 6]])
+# c = np.array([[10, 6], [10, 6]])
+# m = np.divide(c, l)
+# a = [12, 20]
+# W = np.array([[[0, 0.5], [0.5, 0]], [[0, 0.5], [0.5, 0]]])
+
+# B, G, H, s_list = compute_equilibrium_multiple_thresholds(l, c, m, W, a)
+
 def generate_problem_instance(n, case="fair"):
+
     '''
     Returns an instance of the problem
 
