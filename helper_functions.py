@@ -30,24 +30,26 @@ def compute_equilibrium(l, c, m, W, a, pre_converted=None, verbose=False):
         case = "Fair case"
 
     # Parameters and help variables
-    M = 10**3
+    M = 10**6
     n = len(l)
     I_min_W = np.identity(n) - W
 
     # Set up model
     model = gp.Model("CoCo-Model")
     model.setParam(gp.GRB.Param.OutputFlag, 0)  
+    model.setParam('FeasibilityTol', 1e-9)
+
     if case != "Fair case":  
         model.setParam(gp.GRB.Param.PoolSearchMode, 2)          # In the case l > c/m, model admits multiple solutions
         model.setParam(gp.GRB.Param.PoolSolutions, 3**n)        # Note: 3**n is an upperbound on the number of solutions        
 
     # Model variables
-    s = model.addVars(n, vtype=gp.GRB.CONTINUOUS, lb=-gp.GRB.INFINITY)
+    s = model.addVars(n, vtype=gp.GRB.CONTINUOUS, lb=-gp.GRB.INFINITY, ub=gp.GRB.INFINITY)
     delta_B = model.addVars(n, vtype=gp.GRB.BINARY, lb=0, ub=1)
     delta_C = model.addVars(n, vtype=gp.GRB.BINARY, lb=0, ub=1)
     delta_H = model.addVars(n, vtype=gp.GRB.BINARY, lb=0, ub=1)
-    mu_B = model.addVars(n, vtype=gp.GRB.CONTINUOUS, lb=-gp.GRB.INFINITY)
-    mu_C = model.addVars(n, vtype=gp.GRB.CONTINUOUS, lb=-gp.GRB.INFINITY)
+    mu_B = model.addVars(n, vtype=gp.GRB.CONTINUOUS, lb=-gp.GRB.INFINITY, ub=gp.GRB.INFINITY)
+    mu_C = model.addVars(n, vtype=gp.GRB.CONTINUOUS, lb=-gp.GRB.INFINITY, ub=gp.GRB.INFINITY)
 
     # Objective function 
     model.setObjective(gp.quicksum(delta_H[i] for i in range(n)), gp.GRB.MAXIMIZE)      # Note: objective is to optimize healthy banks, can also be set to a constant
@@ -93,24 +95,37 @@ def compute_equilibrium(l, c, m, W, a, pre_converted=None, verbose=False):
             s_list = []
             for i in range(n):
                 s_list.append(s[i].Xn)
-                if delta_B[i].Xn > 0.999:
+                s_rounded = np.round(s_list[i], 8)
+                if delta_B[i].Xn > 0.999 and s_rounded < 0:
                     B.append(i)
-                elif delta_C[i].Xn > 0.999:
+                elif delta_C[i].Xn > 0.999 or s_rounded == l[i] or s_rounded == 0:      #edge cases when s equals the boundary; the bank is then in C but num. precision errors may put it in H/B
                     C.append(i)
-                elif delta_H[i].Xn > 0.999:
+                elif delta_H[i].Xn > 0.999 and s_rounded > l[i]:
                     H.append(i)
+                else:
+                    print("Unassigned algo needed")
+                    if s_rounded >= l[i] - 1e-6 and s_rounded < l[i]:
+                        H.append(i) 
+                    elif s_rounded >= 0 - 1e-6 and s_rounded < 0:
+                        C.append(i)
+                    else:
+                        B.append(i)
+
+            if len(B + C + H) != n:
+                raise Exception("Unassigned banks!")
+
             print(f"Bankrupt: {[i+1 for i in B]}, Converting: {[i+1 for i in C]}, Healthy: {[i+1 for i in H]}") if verbose else None
             print(f"Stock price vector (theoretic): {[round(i, 5) for i in s_list]}") if verbose else None
             print(f"Stock price vector (economic): {[max(round(i, 5), 0) for i in s_list]}") if verbose else None
         
-        return B, C, H, s_list
+
+        return B, C, H, np.round(s_list, 8)
         
     if model.status == gp.GRB.INFEASIBLE:
-        print(f"{case} - model is infeasible, no equilibrium found") 
+        print(f"{case} - model is infeasible, no equilibrium found") if verbose else None
         
-        return ""
+        return 0, 0, 0, 0
 
-# TODO: consider edge cases 
 
 
 def compute_equilibrium_multiple_thresholds(l, c, m, W, a):
@@ -415,3 +430,51 @@ def generate_3d_figure(c, l, m, W, limit_up, limit_down, n_samples, specific_set
         plt.savefig(f'/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/{save_name}', dpi=400)
 
     plt.show()
+
+def compute_systemic_risk_metrics(l, c, m, W, s_initial, shocked_banks, a_simulations):
+    B_array = np.zeros((a_simulations.shape[0], a_simulations.shape[1]))
+    C_array = np.zeros((a_simulations.shape[0], a_simulations.shape[1]))
+    H_array = np.zeros((a_simulations.shape[0], a_simulations.shape[1]))
+    Prb_array = np.zeros((3, a_simulations.shape[1]))
+    L_creditors_array = np.zeros((a_simulations.shape[0], 1))
+    L_creditors_contagion_array = np.zeros((a_simulations.shape[0], 1))
+    L_equityholders_array = np.zeros((a_simulations.shape[0], 1))
+    CCC = np.zeros((a_simulations.shape[0], 1))
+
+    nbInfeasible = 0
+    for i in range(a_simulations.shape[0]):  
+        # Solve problem
+        B, C, H, s = compute_equilibrium(l, c, m, W, a_simulations[i, :])
+        if (B, C, H, s) == (0, 0, 0, 0):
+            nbInfeasible += 1
+            continue
+        
+        L_creditor = 0
+        L_equityholder = 0
+        L_creditor_contagion = 0
+        for j in range(a_simulations.shape[1]):
+
+            B_array[i, j] = 1 if j in B else 0
+            C_array[i, j] = 1 if j in C else 0
+            H_array[i, j] = 1 if j in H else 0
+
+            L_creditor += c[j] if j in B else 0
+            L_creditor += (c[j] - m[j]*s[j]) if j in C else 0
+            L_creditor_contagion += (c[j] - m[j]*s[j]) if j in C and j not in shocked_banks else 0
+            L_equityholder += s[j] if j in H and j not in shocked_banks else 0 
+            L_equityholder += s[j] if j in C and j not in shocked_banks else 0 
+
+        # Metrics
+        L_creditors_array[i] = L_creditor / np.sum(c)
+        L_creditors_contagion_array[i] =  L_creditor_contagion / np.sum(c)
+        L_equityholders_array[i] = (np.sum(s_initial) - L_equityholder) / np.sum(s_initial)
+        CCC[i] = 1 if C_array[i, :].sum() == a_simulations.shape[1] else 0
+
+    Prb_array[0, :] = B_array.mean(axis=0)
+    Prb_array[1, :] = C_array.mean(axis=0)
+    Prb_array[2, :] = H_array.mean(axis=0)
+    
+    if nbInfeasible > 0:
+        print(f"Warning: {nbInfeasible} simulations lead to an infeasible outcome of the MILP-solver.")
+    
+    return Prb_array, CCC.mean(), L_creditors_array, L_creditors_contagion_array, L_equityholders_array
