@@ -1,0 +1,13 @@
+# Ignore all csv files
+*.csv
+
+# Ignore all images
+/images
+/images_c
+/images_m
+
+
+# Ignore resultss
+/results_old
+/Results_CH3_baseline_c_new
+/Results_CH3_baseline_m_new

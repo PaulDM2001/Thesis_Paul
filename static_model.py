@@ -2,7 +2,7 @@ import numpy as np
 from scipy.stats import norm
 import matplotlib.pyplot as plt
 from scipy.stats import truncnorm
-from helper_functions import compute_equilibrium, generate_problem_instance, generate_2d_figure, generate_3d_figure, compute_systemic_risk_metrics
+from helper_functions import compute_equilibrium, generate_problem_instance, generate_2d_figure, generate_3d_figure, compute_systemic_risk_metrics, simulate_shocks_correlated
 import pickle 
 
 ## Plot example 2D in thesis text 
@@ -92,9 +92,9 @@ W_complete = generate_network(n, type="complete", fixed=True, weights_fixed = 0.
 W_cp = generate_network(n, type="core periphery", fixed=True, weights_fixed = 0.75, core_nodes = core_banks)
 
 # Settings for initial asset values
-b = np.ones(n) * 2
-b_cp = np.ones(n) * 2
-b_cp[core_banks] = 5                       
+b = np.ones(n) * 0.1                #2
+b_cp = np.ones(n) * 0.1             #2
+b_cp[core_banks] = 0.5              #5
 
 # Settings for shocks
 np.random.seed(0)   
@@ -109,7 +109,7 @@ shock = z_1*(1 - np.random.beta(1, beta, size=(nbSimulations, 1))) - z_2
 ## Impact of m and c on PD, PC, PH, Lc, Lcc, Leq
 m_range = np.arange(0.01, 5.01, 0.1)
 c_range = np.arange(0.01, 50.01, 1)            
-effect = "c"
+effect = "m"
 
 P_total_ring = np.zeros((m_range.shape[0], 3, n))
 P_total_complete = np.zeros((m_range.shape[0], 3, n))
@@ -136,7 +136,7 @@ CCC_t_complete = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[
 CCC_t_cp = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
 CCC_t_cp_p = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
 
-new_computation = True
+new_computation = False
 if new_computation:
     for k, x in enumerate(m_range if effect == "m" else c_range):
         print(f"Iteration {k}/{m_range.shape[0]}", end='\r')
@@ -225,7 +225,7 @@ plt.rc('xtick', labelsize=10)
 plt.rc('ytick', labelsize=10)      
 plt.rc('legend', fontsize='small')
 
-plotting = True
+plotting = False
 save = False
 if plotting:    
     # Plot system level metrics
@@ -261,10 +261,6 @@ if plotting:
     plt.ylabel(r'$L_{\mathrm{equityholders}}$')
     plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/lossequityholder', bbox_inches="tight", dpi=300) if save else None
     plt.show()
-    print(L_equityholders_ring[:50])
-    print(L_equityholders_complete[:50])
-    print(L_equityholders_cp[:50])
-    print(L_equityholders_cp_p[:50])
 
     # Plot probability metrics
     for i in range(n):
@@ -291,7 +287,6 @@ if plotting:
         plt.ylabel("Probability (cumulative)")
         plt.savefig(rf'/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/prbbank{i+1}coreperiphery', bbox_inches="tight", dpi=300) if save else None
         plt.show()
-        print(P_total_cp[:50, :, i].T)
 
         plt.stackplot(m_range[:50] if effect == "m" else c_range, P_total_cp_p[:50, :, i].T)
         plt.legend(["Bankrupt", "Conversion", "Healthy"])
@@ -300,3 +295,27 @@ if plotting:
         plt.ylabel("Probability (cumulative)")
         plt.savefig(rf'/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/prbbank{i+1}coreperiphery_p', bbox_inches="tight", dpi=300) if save else None
         plt.show()
+
+########################### Analysis of systemic risk (II) ####################################
+
+# Set up the problem 
+n = 4
+core_banks = [0]
+W_ring = generate_network(n, type="ring", fixed=True, weights_fixed = 0.75)
+W_complete = generate_network(n, type="complete", fixed=True, weights_fixed = 0.75)
+W_cp = generate_network(n, type="core periphery", fixed=True, weights_fixed = 0.75, core_nodes = core_banks)
+
+# Settings for initial asset values
+b = np.ones(n) * 0.1                #2
+b_cp = np.ones(n) * 0.1             #2
+b_cp[core_banks] = 0.5              #5
+
+# Settings for shocks
+nbSimulations = 1_000
+beta = np.array([0.5, 2, 3.5, 0.9])
+rho = 0.4
+z_1 = 40
+z_2 = 20
+X_shock = simulate_shocks_correlated(nbSimulations, beta, rho) 
+a_shocked = z_1*(1 - X_shock) - z_2
+

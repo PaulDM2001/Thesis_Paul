@@ -2,6 +2,7 @@ import gurobipy as gp
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from scipy import stats
 
 from matplotlib.patches import Polygon
 from scipy.stats import norm
@@ -478,3 +479,28 @@ def compute_systemic_risk_metrics(l, c, m, W, s_initial, shocked_banks, a_simula
         print(f"Warning: {nbInfeasible} simulations lead to an infeasible outcome of the MILP-solver.")
     
     return Prb_array, CCC.mean(), L_creditors_array, L_creditors_contagion_array, L_equityholders_array
+
+def simulate_shocks_correlated(n_shocks, beta, rho):
+    '''
+    Returns shocks to gross asset values according to Gaussian Copula 
+
+            Parameters:
+                    n_shocks (int): number of scenarios 
+                    beta (np.array): 1-D array of asset quality indices
+                    rho (float): correlation parameter in [0, 1] 
+    
+            Returns:
+                    x_shock (np.array): N-D array of N shocks for D banks
+    '''     
+    n = beta.shape[0]
+    mu_mvn = [0]* n 
+    Sigma_mvn =  np.ones((n, n)) * rho
+    np.fill_diagonal(Sigma_mvn, 1)
+    Y = stats.multivariate_normal(mean=mu_mvn, cov=Sigma_mvn).rvs(n_shocks)
+    U = stats.norm.cdf(Y)
+    X_shock = np.zeros((n_shocks, n))
+    for i in range(n):
+        X_shock[:, i] =  stats.beta(a=1, b=beta[i]).ppf(U[:, i])
+
+    return X_shock
+
