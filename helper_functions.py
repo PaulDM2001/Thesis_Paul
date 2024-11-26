@@ -145,7 +145,7 @@ def compute_equilibrium_multiple_thresholds(l, c, m, W, a, s0, verbose=False):
                     B, C, H, s_list (tuple): Tuple of the sets B, C, H, and the equilibrium stock prices
     '''     
     # Parameters and help variables
-    M = s0[0] * (1 + m[0,0] + m[0,1]) * 2        # Note, M cannot be chosen too large as to prevent the 'Trickle Flow' issue, see https://support.gurobi.com/hc/en-us/articles/16566259882129-How-do-I-diagnose-a-wrong-solution. 
+    M = s0[0] * (1 + m[0]) * 5        # Note, M cannot be chosen too large as to prevent the 'Trickle Flow' issue, see https://support.gurobi.com/hc/en-us/articles/16566259882129-How-do-I-diagnose-a-wrong-solution. 
     n = l.shape[0]
     k = l.shape[1]
     I_min_W =  np.tile(np.identity(n), (k, 1, 1)) - W
@@ -440,14 +440,14 @@ def compute_systemic_risk_metrics(l, c, m, W, s_initial, shocked_banks, a_simula
     nbInfeasible = 0
     for i in range(a_simulations.shape[0]):  
         # Solve problem
-        B, C, H, s = compute_equilibrium(l, c, m, W, a_simulations[i, :])
+        B, C, H, s = compute_equilibrium(l, c, m, W, a_simulations[i, :], s_initial)
         if (B, C, H, s) == (0, 0, 0, 0):
             nbInfeasible += 1
             continue
         
         L_creditor = 0
-        L_equityholder = 0
         L_creditor_contagion = 0
+        L_equityholder = 0
         L_equityholder_contagion = 0
         for j in range(a_simulations.shape[1]):
 
@@ -468,8 +468,9 @@ def compute_systemic_risk_metrics(l, c, m, W, s_initial, shocked_banks, a_simula
         # Metrics
         L_creditors_array[i] = L_creditor / np.sum(c)
         L_creditors_contagion_array[i] =  L_creditor_contagion / np.sum(c)
+        L_equityholders_contagion_array[i] = ((np.sum(s_initial) - np.sum(s_initial[shocked_banks])) - L_equityholder_contagion) / np.sum(s_initial)
         L_equityholders_array[i] = (np.sum(s_initial) - L_equityholder) / np.sum(s_initial)
-        L_equityholders_contagion_array[i] = (np.sum(s_initial) - L_equityholder_contagion) / np.sum(s_initial)
+        
 
     Prb_array[0, :] = B_array.mean(axis=0)
     Prb_array[1, :] = C_array.mean(axis=0)
@@ -526,7 +527,7 @@ def compute_systemic_risk_metrics_multitranch(l, c, m, W, s_initial, shocked_ban
         L_creditors_array[i] = L_creditor / np.sum(c)
         L_creditors_contagion_array[i] =  L_creditor_contagion / np.sum(c)
         L_equityholders_array[i] = (np.sum(s_initial) - L_equityholder) / np.sum(s_initial)
-        L_equityholders_contagion_array[i] = (np.sum(s_initial) - L_equityholder_contagion) / np.sum(s_initial)
+        L_equityholders_contagion_array[i] = ((np.sum(s_initial) - s_initial[shocked_banks]) - L_equityholder_contagion) / np.sum(s_initial)
 
     Prb_array[0, :] = B_array.mean(axis=0)
     Prb_array[1, :] = G2_array.mean(axis=0)
@@ -695,7 +696,7 @@ def plot_results_sensitivity(m_range, c_range, effect, single, P_total_ring, P_t
     plt.title("Systemic losses for equityholders due to contagion")
     plt.xlabel("Conversion rate $m$" if effect == "m" else "Issued convertible debt $c$")
     plt.ylabel(r'$L_{\mathrm{equityholders, contagiion}}$')
-    plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/lossequityholder', bbox_inches="tight", dpi=300) if save else None
+    plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/lossequityholdercontagion', bbox_inches="tight", dpi=300) if save else None
     plt.show()
     
     # Plot probability metrics
