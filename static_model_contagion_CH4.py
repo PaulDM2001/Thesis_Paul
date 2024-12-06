@@ -1,8 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from helper_functions import compute_equilibrium, compute_systemic_risk_metrics, compute_sensitivity_contract_parameters, simulate_shocks_correlated, plot_results_sensitivity, compute_sensitivity_contract_parameters_multitranch
+from helper_functions import compute_sensitivity_contract_parameters, plot_results_sensitivity, compute_sensitivity_contract_parameters_multitranch
 import pickle 
-import time
 
 ########################### Networks ####################################
 

@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy import stats
 import time
+import pandas as pd
 
 from matplotlib.patches import Polygon
 from scipy.stats import norm
@@ -877,3 +878,13 @@ def simulate_shocks_correlated(n_shocks, beta, rho):
         X_shock[:, i] =  stats.beta(a=1, b=beta[i]).ppf(U[:, i])
 
     return X_shock
+
+def import_weight_matrices_R(filename):
+    W_collection = []
+    for i in range(10):
+        path = filename + rf"_{i+1}.csv"
+        W_matrix_i = pd.read_csv(path, index_col=0).to_numpy()
+        W_matrix_i_normalized = W_matrix_i / np.sum(W_matrix_i, axis=0)
+        W_collection.append(W_matrix_i_normalized)
+    
+    return W_collection

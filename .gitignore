@@ -6,8 +6,10 @@
 /images_c
 /images_m
 
+# Ignore results
+/results_CH4
 
-# Ignore resultss
-/results_old
-/Results_CH3_baseline_c_new
-/Results_CH3_baseline_m_new
+# Ignore data
+/Data EBA
+/results_CH4
+/__pycache__
