@@ -25,15 +25,15 @@ def compute_equilibrium(l, c, m, W, a, pre_converted=None, verbose=False):
             Returns:
                     B, C, H, s_list (tuple): Tuple of the sets B, C, H, and the equilibrium stock prices
     '''     
-    if any(l > c/m) and not any(l < c/m):
+    if np.any(np.round(l,6) > np.round(c/m,6)) and not np.any(np.round(l,6) < np.round(c/m,6)):
         case = "Super-fair case"
-    elif any(l < c/m):
+    elif np.any(np.round(l,6) < np.round(c/m,6)):
         case = "Sub-fair case"
     else:
         case = "Fair case"
 
     # Parameters and help variables
-    M = 10**6
+    M = 10 ** 6
     n = len(l)
     I_min_W = np.identity(n) - W
 
@@ -42,9 +42,11 @@ def compute_equilibrium(l, c, m, W, a, pre_converted=None, verbose=False):
     model.setParam(gp.GRB.Param.OutputFlag, 0)  
     model.setParam('FeasibilityTol', 1e-9)
 
-    if case != "Fair case":  
-        model.setParam(gp.GRB.Param.PoolSearchMode, 2)          # In the case l > c/m, model admits multiple solutions
-        model.setParam(gp.GRB.Param.PoolSolutions, 3**n)        # Note: 3**n is an upperbound on the number of solutions        
+    # Note, we do search for multiple solutions here even in the fair case as we check for numerical issues manually at the
+    # end of this function 
+    # if case != "Fair case":  
+    model.setParam(gp.GRB.Param.PoolSearchMode, 2)          # In the case l > c/m, model admits multiple solutions
+    model.setParam(gp.GRB.Param.PoolSolutions, 3**4)        # Note: 3**n is an upperbound on the number of solutions        
 
     # Model variables
     s = model.addVars(n, vtype=gp.GRB.CONTINUOUS, lb=-gp.GRB.INFINITY, ub=gp.GRB.INFINITY)
@@ -88,41 +90,52 @@ def compute_equilibrium(l, c, m, W, a, pre_converted=None, verbose=False):
     # Solutions
     if model.status == gp.GRB.OPTIMAL:
         n_sol = model.SolCount
-        print(f"{case} - number of solutions found: {n_sol}") if verbose else None
+
+        i_not_assigned = [] 
         for i in range(n_sol):
             model.setParam(gp.GRB.Param.SolutionNumber, i)
             # Return partition and stock prices
-            B = []
-            C = []
-            H = []
-            s_list = []
-            for i in range(n):
-                s_list.append(s[i].Xn)
-                s_rounded = np.round(s_list[i], 8)
-                if delta_B[i].Xn > 0.999 and s_rounded < 0:
-                    B.append(i)
-                elif delta_C[i].Xn > 0.999 or s_rounded == l[i] or s_rounded == 0:      #edge cases when s equals the boundary; the bank is then in C but num. precision errors may put it in H/B
-                    C.append(i)
-                elif delta_H[i].Xn > 0.999 and s_rounded > l[i]:
-                    H.append(i)
-                else:
-                    print("Unassigned algo needed")
-                    if s_rounded >= l[i] - 1e-6 and s_rounded < l[i]:
-                        H.append(i) 
-                    elif s_rounded >= 0 - 1e-6 and s_rounded < 0:
-                        C.append(i)
-                    else:
-                        B.append(i)
+            B_array = np.zeros((n, n_sol))
+            C_array = np.zeros((n, n_sol))
+            H_array = np.zeros((n, n_sol))
+            s_array = np.zeros((n, n_sol))
+            for j in range(n):
+                s_rounded = np.round(s[j].Xn, 6)
+                s_array[j, i] = s_rounded
+                if delta_B[j].Xn > 0.999 and s_rounded < 0:
+                    B_array[j, i] = 1
+                elif delta_C[j].Xn > 0.999 or s_rounded == l[j] or s_rounded == 0:      # Edge cases when s equals the boundary; the bank is then in C but num. precision errors may put it in H/B
+                    C_array[j, i] = 1
+                elif delta_H[j].Xn > 0.999 and s_rounded > l[j]:    
+                    H_array[j, i] = 1
+                
+            # Check if all banks are assigned to a set (numerical issues may prevent this)
+            all_assigned = np.sum(B_array[:, i] + C_array[:, i] + H_array[:, i])
+            if np.sum(all_assigned) != n:
+                i_not_assigned.append(i)
+                print(f"\n Not all banks assigned in solution {i}\{n_sol}.")
 
-            if len(B + C + H) != n:
-                raise Exception("Unassigned banks!")
+        i_assigned = [i for i in range(n) if i not in i_not_assigned]
+        if n_sol > 1 and case == "Fair case":   #handeling of numerical issues due to feasibility tolerance
+            print("Multiple solutions")
+            avg_s = np.mean(s_array, axis=1)
+            dev_from_avg = s_array - avg_s[:, np.newaxis]
+            print(dev_from_avg)
+            print(s_array)
+            if np.any(np.abs(dev_from_avg) > 1e-4):
+                print("Deviation more than 1e-4")
+                
+            # Taking the first solution where all banks are assigned as correct solution and printing to check if this is correct 
+            i_star = i_assigned[0]
+            B_array = B_array[:,i_star]
+            C_array = C_array[:,i_star]
+            H_array = H_array[:,i_star]
+            s_array = s_array[:,i_star]
+            print(B_array)
+            print(C_array)
+            print(H_array)
 
-            print(f"Bankrupt: {[i+1 for i in B]}, Converting: {[i+1 for i in C]}, Healthy: {[i+1 for i in H]}") if verbose else None
-            print(f"Stock price vector (theoretic): {[round(i, 5) for i in s_list]}") if verbose else None
-            print(f"Stock price vector (economic): {[max(round(i, 5), 0) for i in s_list]}") if verbose else None
-        
-
-        return B, C, H, np.round(s_list, 8)
+        return B_array.squeeze(), C_array.squeeze(), H_array.squeeze(), s_array.squeeze()
         
     if model.status == gp.GRB.INFEASIBLE:
         print(f"{case} - model is infeasible, no equilibrium found") if verbose else None
@@ -130,7 +143,7 @@ def compute_equilibrium(l, c, m, W, a, pre_converted=None, verbose=False):
         return 0, 0, 0, 0
 
 
-def compute_equilibrium_multiple_thresholds(l, c, m, W, a, s0, verbose=False):
+def compute_equilibrium_multiple_thresholds(l, c, m, W, a, s0=None, verbose=False, combination_multi_single=False):
     '''
     Returns the equilibrium stock prices of an interbank system with CoCo's that have market triggers.
 
@@ -146,29 +159,35 @@ def compute_equilibrium_multiple_thresholds(l, c, m, W, a, s0, verbose=False):
                     B, C, H, s_list (tuple): Tuple of the sets B, C, H, and the equilibrium stock prices
     '''     
     # Parameters and help variables
-    M = s0[0] * (1 + m[0]) * 5        # Note, M cannot be chosen too large as to prevent the 'Trickle Flow' issue, see https://support.gurobi.com/hc/en-us/articles/16566259882129-How-do-I-diagnose-a-wrong-solution. 
     n = l.shape[0]
     k = l.shape[1]
+    if s0 is not None:
+        M = s0 * (1 + np.sum(m, axis = 1)) * 5                           # Note, M cannot be chosen too large as to prevent the 'Trickle Flow' issue, see https://support.gurobi.com/hc/en-us/articles/16566259882129-How-do-I-diagnose-a-wrong-solution. 
+    else:
+        M = np.ones(n) * 10 ** 4
     I_min_W =  np.tile(np.identity(n), (k, 1, 1)) - W
 
     # Check fairness:
-    for i in range(n):
-        if all(l[i, :] == np.round(c[i, :] / m[i, :], 6)):
-            case = "Fair case"
-        elif any(l[i, :] < np.round(c[i, :] / m[i, :],6)): 
-            case = "Sub-fair case"
-            break
-        else:
-            case = "Super-fair case"
+    if combination_multi_single:
+        case = "Fair case"
+    elif np.all(np.round(l, 6) == np.round(c / m, 6)):
+        case = "Fair case"
+    elif np.any(np.round(l, 6) < np.round(c / m,6 )):
+        case = "Sub-fair case"
+    else:
+        case = "Super-fair case"
     print(case) if verbose else None
 
     # Set up model
     model = gp.Model("CoCo-Model-MultiThreshold")
     model.setParam(gp.GRB.Param.OutputFlag, 0)  
     model.setParam('FeasibilityTol', 1e-9)
-    if case != "Fair case":
-        model.setParam(gp.GRB.Param.PoolSearchMode, 2)          # In the case l > c/m, model admits multiple solutions
-        model.setParam(gp.GRB.Param.PoolSolutions, 3**n)        # Note: 3**n is an upperbound on the number of solutions   
+    
+    # Note, we do search for multiple solutions here even in the fair case as we check for numerical issues manually at the
+    # end of this function 
+    #if case != "Fair case": 
+    model.setParam(gp.GRB.Param.PoolSearchMode, 2)          # In the case l > c/m, model admits multiple solutions
+    model.setParam(gp.GRB.Param.PoolSolutions, 3**4)        # Note: 3**n is an upperbound on the number of solutions   
 
     # Model variables
     s = model.addVars(n, vtype=gp.GRB.CONTINUOUS, lb=-gp.GRB.INFINITY)
@@ -187,6 +206,10 @@ def compute_equilibrium_multiple_thresholds(l, c, m, W, a, s0, verbose=False):
 
     # Constraints
     for i in range(n):
+        if combination_multi_single:
+            # Extra constraint to prevent numerical issues when some banks have only a single-tranch CoCo 
+            model.addConstr(delta_G[i, 1] == 0) if m[i, 1] == 0 else None        
+
         # Constraint on deltas
         model.addConstr(delta_B[i] + gp.quicksum(delta_G[i,t] for t in range(k)) + delta_H[i] == 1)  
         for t in range(k): 
@@ -194,25 +217,25 @@ def compute_equilibrium_multiple_thresholds(l, c, m, W, a, s0, verbose=False):
             model.addConstr(delta_Ht[i, t] == delta_H[i] + gp.quicksum(delta_G[i,u] for u in range(t)))
 
         # Constraint on partition consistency
-        model.addConstr(s[i] <= M * (1 - delta_B[i]))
-        model.addConstr(s[i] >= -M * (1 - delta_G[i,k-1]))
-        model.addConstr(s[i] <= l[i,(k-1)] * delta_G[i,(k-1)] + M * (1 - delta_G[i,(k-1)]))
+        model.addConstr(s[i] <= M[i] * (1 - delta_B[i]))
+        model.addConstr(s[i] >= -M[i] * (1 - delta_G[i,k-1]))
+        model.addConstr(s[i] <= l[i,(k-1)] * delta_G[i,(k-1)] + M[i] * (1 - delta_G[i,(k-1)]))
         for t in range(k-1):
-            model.addConstr(s[i] >= l[i, t+1]*delta_G[i,t] - M * (1 - delta_G[i,t]))
-            model.addConstr(s[i] <= l[i, t]*delta_G[i,t] + M * (1 - delta_G[i,t])) 
-        model.addConstr(s[i] >= l[i,0] * delta_H[i] - M * (1 - delta_H[i]))
+            model.addConstr(s[i] >= l[i, t+1]*delta_G[i,t] - M[i] * (1 - delta_G[i,t]))
+            model.addConstr(s[i] <= l[i, t]*delta_G[i,t] + M[i] * (1 - delta_G[i,t])) 
+        model.addConstr(s[i] >= l[i,0] * delta_H[i] - M[i] * (1 - delta_H[i]))          
 
         # Auxiliary variables 
         for t in range(k):
-            model.addConstr(mu_Bt[i,t] >= -M * (1 - delta_B[i]) + m[i,t]*s[i])
-            model.addConstr(mu_Bt[i,t] <= M * (1 - delta_B[i]) + m[i,t]*s[i])
-            model.addConstr(mu_Bt[i,t] >= -M * delta_B[i])
-            model.addConstr(mu_Bt[i,t] <= M * delta_B[i])
+            model.addConstr(mu_Bt[i,t] >= -M[i] * (1 - delta_B[i]) + m[i,t]*s[i])
+            model.addConstr(mu_Bt[i,t] <= M[i] * (1 - delta_B[i]) + m[i,t]*s[i])
+            model.addConstr(mu_Bt[i,t] >= -M[i] * delta_B[i])
+            model.addConstr(mu_Bt[i,t] <= M[i] * delta_B[i])
             
-            model.addConstr(mu_Ct[i,t] >= -M * (1 - delta_Ct[i,t]) + m[i,t]*s[i] )
-            model.addConstr(mu_Ct[i,t] <= M * (1 - delta_Ct[i,t]) + m[i,t]*s[i])
-            model.addConstr(mu_Ct[i,t] >= -M * delta_Ct[i,t])
-            model.addConstr(mu_Ct[i,t] <= M * delta_Ct[i,t])
+            model.addConstr(mu_Ct[i,t] >= -M[i] * (1 - delta_Ct[i,t]) + m[i,t]*s[i] )
+            model.addConstr(mu_Ct[i,t] <= M[i] * (1 - delta_Ct[i,t]) + m[i,t]*s[i])
+            model.addConstr(mu_Ct[i,t] >= -M[i] * delta_Ct[i,t])
+            model.addConstr(mu_Ct[i,t] <= M[i] * delta_Ct[i,t])
         # (B,C,H)-equilibrium constraint
         model.addConstr(a[i] == s[i] + gp.quicksum(mu_Bt[i,t] for t in range(k)) + gp.quicksum(gp.quicksum(I_min_W[t,i,j] * (mu_Ct[j,t] + c[j,t] * delta_Ht[j,t]) for j in range(n)) for t in range(k)))
                         
@@ -223,41 +246,55 @@ def compute_equilibrium_multiple_thresholds(l, c, m, W, a, s0, verbose=False):
     if model.status == gp.GRB.OPTIMAL:
         n_sol = model.SolCount 
         B_array = np.zeros((n, n_sol))
-        G1_array = np.zeros((n, n_sol))
         G2_array = np.zeros((n, n_sol))
+        G1_array = np.zeros((n, n_sol))
         H_array = np.zeros((n, n_sol))
         s_array = np.zeros((n, n_sol))
 
+        i_not_assigned = [] 
         for i in range(n_sol):
             model.setParam(gp.GRB.Param.SolutionNumber, i)
             # Return partition and stock prices
             for j in range(n):
-                s_array[j, i] = s[j].Xn
-                if delta_B[j].Xn > 0.999:
+                s_rounded = np.round(s[j].Xn, 6)
+                s_array[j, i] = s_rounded
+                if delta_B[j].Xn > 0.999 and s_rounded < 0:
                     B_array[j, i] = 1
-                elif delta_H[j].Xn > 0.999:
+                elif delta_H[j].Xn > 0.999 and s_rounded > l[j, 0]:
                     H_array[j, i] = 1
-                elif delta_G[j, 0].Xn > 0.999:
+                elif delta_G[j, 0].Xn > 0.999 and s_rounded <= l[j, 0] and s_rounded > l[j, 1]:
                     G1_array[j, i] = 1
-                elif delta_G[j, 1].Xn > 0.999:
+                elif delta_G[j, 1].Xn > 0.999 and s_rounded <= l[j, 1] and s_rounded > 0:
                     G2_array[j, i] = 1
-        
+            
+            # Check if all banks are assigned to a set (numerical issues may prevent this)
+            all_assigned = np.sum(B_array[:, i] + H_array[:, i] + G1_array[:, i] + G2_array[:, i])
+            if np.sum(all_assigned) != n:
+                i_not_assigned.append(i)
+                print(f"\n Not all banks assigned in solution {i}.")
+
+        i_assigned = [i for i in range(n) if i not in i_not_assigned]
         if n_sol > 1 and case == "Fair case":   #handeling of numerical issues due to feasibility tolerance
-            for k in range(n_sol-1):
-                summed_diff_s = np.sum(np.abs(s_array[:, k+1] - s_array[:, k]))
-                summed_diff_B = np.sum(np.abs(B_array[:, k+1] - B_array[:, k]))
-                summed_diff_G1 = np.sum(np.abs(G1_array[:, k+1] - G1_array[:, k]))
-                summed_diff_G2 = np.sum(np.abs(G2_array[:, k+1] - G2_array[:, k]))
-                summed_diff_H = np.sum(np.abs(H_array[:, k+1] - H_array[:, k]))
-                if summed_diff_s + summed_diff_B + summed_diff_G1 + summed_diff_G2 + summed_diff_H > 0.01:
-                    raise Exception("Two different solutions in fair case. Check inputs.")
-            B_array = B_array[:,:-1]
-            G1_array = G1_array[:,:-1]
-            G2_array = G2_array[:,:-1]
-            H_array = H_array[:,:-1]
-            s_array = s_array[:,:-1]
-    
-        return B_array, G2_array, G1_array, H_array, s_array
+            print("Multiple solutions")
+            avg_s = np.mean(s_array, axis=1)
+            dev_from_avg = s_array - avg_s[:, np.newaxis]
+            print(dev_from_avg)
+            if np.any(np.abs(dev_from_avg) > 1e-4):
+                print("Deviation more than 1e-4")
+            # Taking the first solution where all banks are assigned as correct solution and printing to check if this is correct 
+            i_star = i_assigned[0]
+            B_array = B_array[:,i_star]
+            G1_array = G1_array[:,i_star]
+            G2_array = G2_array[:,i_star]
+            H_array = H_array[:,i_star]
+            s_array = s_array[:,i_star]
+            print(s_array)
+            print(B_array)
+            print(G2_array)
+            print(G1_array)
+            print(H_array)
+
+        return B_array.squeeze(), G2_array.squeeze(), G1_array.squeeze(), H_array.squeeze(), s_array.squeeze()
         
     if model.status == gp.GRB.INFEASIBLE:
         print(f"{case} - model is infeasible, no equilibrium found")
@@ -266,7 +303,7 @@ def compute_equilibrium_multiple_thresholds(l, c, m, W, a, s0, verbose=False):
 
 
 # Function to generate nice figures as in Balter et al. (2023)
-def generate_2d_figure(c, l, m, w, limit_up, limit_down, show=True, save=False):
+def generate_2d_figure(c, l, m, w, limit_up, limit_down, show=True, save=False, save_name=None):
     # HH region
     corner_HH1 = (l[0] + c[0] - w[0]*c[1], l[1] + c[1] - w[1]*c[0])
     corner_HH2 = (l[0] + c[0] - w[0]*c[1], limit_up)
@@ -338,7 +375,7 @@ def generate_2d_figure(c, l, m, w, limit_up, limit_down, show=True, save=False):
     polygonBC = [corner_BC1, corner_BC2, corner_BC4, corner_BC3] 
     polygonCC = [corner_CC1, corner_CC2, corner_CC4, corner_CC3] 
 
-    polygon_list = [polygonHH, polygonHB, polygonBH, polygonBB, polygonHC, polygonHC, polygonCB, polygonBC, polygonCC]
+    polygon_list = [polygonHH, polygonHB, polygonBH, polygonBB, polygonHC, polygonCH, polygonCB, polygonBC, polygonCC]
     color_list = [(0.6, 0.8, 1, 0.5), (0.6, 1, 0.6, 0.5), (1, 0.6, 0.6, 0.5), (1, 1, 0.6, 0.5), (1, 0.8, 0.8, 0.5), (0.8, 0.6, 1, 0.5), (1, 0.8, 0.6, 0.5), (0.6, 1, 0.8, 0.5), (0.8, 0.8, 0.8, 0.5)]
 
     _, ax = plt.subplots()
@@ -374,10 +411,16 @@ def generate_2d_figure(c, l, m, w, limit_up, limit_down, show=True, save=False):
 
     # Save/show
     plt.grid(False)
+    plt.rc('axes', labelsize=12)       
+    plt.rc('xtick', labelsize=10)       
+    plt.rc('ytick', labelsize=10)      
     if save:
-        plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/w_high', dpi=400)
+        plt.tight_layout()
+        plt.savefig(fr'Images/Images CH3/{save_name}', dpi=400)
     if show:
         plt.show()
+
+
 
 def generate_3d_figure(c, l, m, W, limit_up, limit_down, n_samples, specific_set=None, save=False, save_name='', seed=True):
     if seed:
@@ -385,10 +428,10 @@ def generate_3d_figure(c, l, m, W, limit_up, limit_down, n_samples, specific_set
 
     # Generate random samples in 3D space
     random_points = np.random.uniform(low=limit_down, high=limit_up, size=(n_samples, 3))
-    random_points[:, 2] = 2
-
     outcomes = []
     for i in range(n_samples):
+        if i % 10000 == 0:
+            print(i)
         a = random_points[i, :]
         B, C, H, s_list = compute_equilibrium(l, c, m, W, a, verbose=False)
         str = ''
@@ -424,230 +467,116 @@ def generate_3d_figure(c, l, m, W, limit_up, limit_down, n_samples, specific_set
     ax.legend(loc="upper left", ncol=2, bbox_to_anchor=(-0.35, 1), columnspacing=0.4, fontsize="small")
 
     if save:
-        plt.savefig(f'/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/{save_name}', dpi=400)
+        plt.savefig(f'Images/Images CH3/{save_name}', dpi=400)
 
     plt.show()
 
-def compute_systemic_risk_metrics(l, c, m, W, s_initial, shocked_banks, a_simulations):
-    B_array = np.zeros((a_simulations.shape[0], a_simulations.shape[1]))
-    C_array = np.zeros((a_simulations.shape[0], a_simulations.shape[1]))
-    H_array = np.zeros((a_simulations.shape[0], a_simulations.shape[1]))
-    Prb_array = np.zeros((3, a_simulations.shape[1]))
-    L_creditors_array = np.zeros((a_simulations.shape[0], 1))
-    L_creditors_contagion_array = np.zeros((a_simulations.shape[0], 1))
-    L_equityholders_array = np.zeros((a_simulations.shape[0], 1))
-    L_equityholders_contagion_array = np.zeros((a_simulations.shape[0], 1))
-
-    nbInfeasible = 0
-    for i in range(a_simulations.shape[0]):  
-        # Solve problem
-        B, C, H, s = compute_equilibrium(l, c, m, W, a_simulations[i, :], s_initial)
-        if (B, C, H, s) == (0, 0, 0, 0):
-            nbInfeasible += 1
-            continue
-        
-        L_creditor = 0
-        L_creditor_contagion = 0
-        L_equityholder = 0
-        L_equityholder_contagion = 0
-        for j in range(a_simulations.shape[1]):
-
-            B_array[i, j] = 1 if j in B else 0
-            C_array[i, j] = 1 if j in C else 0
-            H_array[i, j] = 1 if j in H else 0
-
-            L_creditor += c[j] if j in B else 0
-            L_creditor += (c[j] - m[j]*s[j]) if j in C else 0
-
-            L_creditor_contagion += (c[j] - m[j]*s[j]) if j in C and j not in shocked_banks else 0
-
-            L_equityholder += s[j] if j in H else 0
-            L_equityholder += s[j] if j in C else 0
-            L_equityholder_contagion += s[j] if j in H and j not in shocked_banks else 0
-            L_equityholder_contagion += s[j] if j in C and j not in shocked_banks else 0
-
-        # Metrics
-        L_creditors_array[i] = L_creditor / np.sum(c)
-        L_creditors_contagion_array[i] =  L_creditor_contagion / np.sum(c)
-        L_equityholders_contagion_array[i] = ((np.sum(s_initial) - np.sum(s_initial[shocked_banks])) - L_equityholder_contagion) / np.sum(s_initial)
-        L_equityholders_array[i] = (np.sum(s_initial) - L_equityholder) / np.sum(s_initial)
-        
-
-    Prb_array[0, :] = B_array.mean(axis=0)
-    Prb_array[1, :] = C_array.mean(axis=0)
-    Prb_array[2, :] = H_array.mean(axis=0)
-    
-    if nbInfeasible > 0:
-        print(f"Warning: {nbInfeasible} simulations lead to an infeasible outcome of the MILP-solver.")
-    
-    return Prb_array, L_creditors_array, L_creditors_contagion_array, L_equityholders_array, L_equityholders_contagion_array
 
 
-def compute_systemic_risk_metrics_multitranch(l, c, m, W, s_initial, shocked_banks, a_simulations):
-    B_array = np.zeros((a_simulations.shape[0], a_simulations.shape[1]))
-    G2_array = np.zeros((a_simulations.shape[0], a_simulations.shape[1]))
-    G1_array = np.zeros((a_simulations.shape[0], a_simulations.shape[1]))
-    H_array = np.zeros((a_simulations.shape[0], a_simulations.shape[1]))
-    Prb_array = np.zeros((4, a_simulations.shape[1]))
-    L_creditors_array = np.zeros((a_simulations.shape[0], 1))
-    L_creditors_contagion_array = np.zeros((a_simulations.shape[0], 1))
-    L_equityholders_array = np.zeros((a_simulations.shape[0], 1))
-    L_equityholders_contagion_array = np.zeros((a_simulations.shape[0], 1))
+def generate_2d_figure_multi(c, l, m, W, limit_up=30, limit_down=-30, n_samples=100_000, specific_set=None, save=False, save_name='', seed=True):
+    if seed:
+        np.random.seed(0)
 
-    nbInfeasible = 0
-    for i in range(a_simulations.shape[0]):  
-        # Solve problem
-        B, G2, G1, H, s = compute_equilibrium_multiple_thresholds(l, c, m, W, a_simulations[i, :], s_initial)
-        if isinstance(s, int):
-            nbInfeasible +=1
-            continue
-        
-        B_array[i, :] = B.squeeze()
-        G2_array[i, :] = G2.squeeze()
-        G1_array[i, :] = G1.squeeze()
-        H_array[i, :] = H.squeeze()
+    # Generate random samples in 2D space
+    random_points = np.random.uniform(low=limit_down, high=limit_up, size=(n_samples, 2))
+    outcomes = []
+    for i in range(n_samples):
+        if i % 10000 == 0:
+            print(i)
+        a = random_points[i, :]
+        B, CL, CH, H, s_list = compute_equilibrium_multiple_thresholds(l, c, m, W, a, verbose=False)
+        str = ''
+        for i in range(2):
+            if s_list[i] < 0:
+                str += 'B'
+            elif s_list[i] >= 0 and s_list[i] <= l[i, 1]:
+                str += 'C1'
+            elif s_list[i] > l[i, 1] and s_list[i] <= l[i, 0]:
+                str += 'C2'
+            else:
+                str += 'H'
+        outcomes.append(str)
 
-        L_creditor = 0
-        L_equityholder = 0
-        L_creditor_contagion = 0
-        L_equityholder_contagion = 0
-        for j in range(a_simulations.shape[1]):
-
-            L_creditor += (c[j,0] + c[j,1]) if B[j] == 1 else 0
-            L_creditor += (c[j,0] + c[j,1] - (m[j,0] + m[j,1])*s[j]) if G2[j] == 1 else 0
-            L_creditor += (c[j,0] - m[j,0]*s[j]) if G1[j] == 1 else 0
-
-            L_creditor_contagion += (c[j,0] + c[j,1]) if B[j] == 1 and j not in shocked_banks else 0
-            L_creditor_contagion += (c[j,0] + c[j,1]  - (m[j,0] + m[j,1])*s[j]) if G2[j] == 1 and j not in shocked_banks else 0
-            L_creditor_contagion += (c[j,0] - m[j,0]*s[j]) if G1[j] == 1 and j not in shocked_banks else 0
-
-            L_equityholder += s[j] if ((H[j] == 1 or G1[j] ==1 or G2[j] ==1)) else 0
-            L_equityholder_contagion += s[j] if ((H[j] == 1 or G1[j] ==1 or G2[j] ==1)) and j not in shocked_banks else 0
-
-        # Metrics
-        L_creditors_array[i] = L_creditor / np.sum(c)
-        L_creditors_contagion_array[i] =  L_creditor_contagion / np.sum(c)
-        L_equityholders_array[i] = (np.sum(s_initial) - L_equityholder) / np.sum(s_initial)
-        L_equityholders_contagion_array[i] = ((np.sum(s_initial) - s_initial[shocked_banks]) - L_equityholder_contagion) / np.sum(s_initial)
-
-    Prb_array[0, :] = B_array.mean(axis=0)
-    Prb_array[1, :] = G2_array.mean(axis=0)
-    Prb_array[2, :] = G1_array.mean(axis=0)
-    Prb_array[3, :] = H_array.mean(axis=0)
-    
-    if nbInfeasible > 0:
-        print(f"Warning: {nbInfeasible} simulations lead to an infeasible outcome of the MILP-solver.")
-    
-    return Prb_array, L_creditors_array, L_creditors_contagion_array, L_equityholders_array, L_equityholders_contagion_array
+    # Assign colors to the set labels
+    unique_labels = np.unique(outcomes)
+    label_to_color = {label: color for label, color in zip(unique_labels, sns.color_palette("tab20", len(unique_labels)))}
+    colors = [label_to_color[label] for label in outcomes]
+    if specific_set:
+        colors = [(0, 1, 0, 1.0) if label==specific_set else (0.827, 0.827, 0.827, 0.01) for label in outcomes]
 
 
-def compute_sensitivity_contract_parameters(n, W_variants, core_banks, shocked_banks, shocked_banks_periphery, b_rc, b_cp, X_shock, m_range, c_range, effect):
-    P_total_ring = np.zeros((m_range.shape[0], 3, n))
-    P_total_complete = np.zeros((m_range.shape[0], 3, n))
-    P_total_cp = np.zeros((m_range.shape[0], 3, n))
-    P_total_cp_p = np.zeros((m_range.shape[0], 3, n))
+    # Create a 3D scatter plot
+    fig = plt.figure()
+    ax = fig.add_subplot()
+    ax.set_aspect('equal')
+    ax.set_xlim(limit_down, limit_up)
+    ax.set_ylim(limit_down, limit_up)
+    plt.xticks(range(limit_down, limit_up+1, 5))  
+    plt.yticks(range(limit_down, limit_up+1, 5))  
+    plt.xlabel("Asset value bank 1 ($a_1$)")
+    plt.ylabel("Asset value bank 2 ($a_2$)")
+    sct_plot = ax.scatter(random_points[:, 0], random_points[:, 1], c=colors, s=1.5)
 
-    L_creditors_ring = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_creditors_complete = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_creditors_cp = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_creditors_cp_p = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
+    for label in unique_labels:
+        ax.scatter([], [], [], color=label_to_color[label], label=label)
+    legend = ax.legend(loc="upper right", ncol=1, bbox_to_anchor=(1.25, 1), columnspacing=0.4, fontsize="small")
+    for handle in legend.legend_handles:
+        handle.set_sizes([9.0])
 
-    L_creditors_contagion_ring = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_creditors_contagion_complete = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_creditors_contagion_cp = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_creditors_contagion_cp_p = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
+    if save:
+        plt.savefig(f'Images/Images CH3/{save_name}', dpi=400)
 
-    L_equityholders_ring = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_equityholders_complete = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_equityholders_cp = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_equityholders_cp_p = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
+    plt.show()
 
-    L_equityholders_contagion_ring = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_equityholders_contagion_complete = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_equityholders_contagion_cp = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_equityholders_contagion_cp_p = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
+    return 0
 
-    st = time.time()
-    et = time.time()
-    for k, x in enumerate(m_range if effect == "m" else c_range):
-        print(f"Iteration {k}/{m_range.shape[0]}, elapsed time: {np.round(et-st,2)} seconds", end='\r')
-       
-        # Determine parameters based on chosen effect
-        if effect == "m": 
-            m = np.ones(n) * x
-            c_small = 12
-            c_rc = np.ones(n) * c_small
-            c_cp = np.ones(n) * c_small
-            c_cp[core_banks] = c_small * (n - len(core_banks))
 
-        elif effect == "c": 
-            m = np.ones(n)
-            c_rc = np.ones(n) * x
-            c_cp = np.ones(n) * x
-            c_cp[core_banks] = x * (n - len(core_banks))
 
-        else:
-            raise Exception("No valid effect chosen. Calculation stops")
+def generate_network(n, type, fixed=True, weights_fixed = 1.0, core_nodes=[1], gamma_mixed=0.5):
+    # Ring network
+    adj_matrix_ring = np.roll(np.eye(n), 1, axis=1)
 
-        l_rc = np.round(c_rc / m, 6)
-        l_cp = np.round(c_cp / m, 6)
+    # Core-pheriphery network 
+    if type == "core periphery" and core_nodes is None:
+        raise Exception("Core periphery network is selected but list of core nodes is empty")
+    else: 
+        adj_matrix_core_periphery = np.zeros((n, n), dtype=int)
+        for i in core_nodes:
+            adj_matrix_core_periphery[i, :] = 1
+            adj_matrix_core_periphery[:, i] = 1
+        np.fill_diagonal(adj_matrix_core_periphery, 0)
 
-        # Compute initial assets and shocked assets
-        a_rc = np.tile(l_rc + c_rc - np.matmul(W_variants[0], c_rc) + b_rc, (X_shock.shape[0], 1))
-        a_cp = np.tile(l_cp + c_cp - np.matmul(W_variants[2], c_cp) + b_cp, (X_shock.shape[0], 1))
-        a_cp_p = np.tile(l_cp + c_cp - np.matmul(W_variants[2], c_cp) + b_cp, (X_shock.shape[0], 1))
+    # Complete Network
+    adj_matrix_complete = np.ones((n,n), dtype=int)
+    np.fill_diagonal(adj_matrix_complete, 0)
 
-        a_rc[:, shocked_banks] = np.minimum(X_shock, a_rc[:, shocked_banks])
-        a_cp[:, shocked_banks] = np.minimum(X_shock * (n-len(core_banks)), a_cp[:, shocked_banks])
-        a_cp_p[:, shocked_banks_periphery] = np.minimum(X_shock, a_cp_p[:, shocked_banks_periphery])
+    if fixed:
+        W_ring = adj_matrix_ring * weights_fixed
+        W_core_periphery = np.zeros((n, n))
+        for i in range(n):
+            if i in core_nodes:
+                W_core_periphery[:, i] = adj_matrix_core_periphery[:, i] * weights_fixed / (n-1)
+                W_core_periphery[i, :] = adj_matrix_core_periphery[i, :] * weights_fixed 
+        W_complete = adj_matrix_complete * weights_fixed/(n-1) 
+    else:
+        random_weights = np.random.rand(n, n)
+        W_ring = np.round(adj_matrix_ring * random_weights, 4)
+        W_complete = adj_matrix_complete * np.round(random_weights / np.sum(random_weights, axis=0), 2)
 
-        # Compute initial prices
-        s0_rc = l_rc + b_rc
-        s0_cp = l_cp + b_cp
+    # Convex combination of Ring and Complete
+    W_mixed = gamma_mixed * W_ring + (1 - gamma_mixed) * W_complete
 
-        # Compute systemic risk metrics
-        Prb_array_ring, L_creditors_array_ring, L_creditors_contagion_array_ring, L_equityholders_array_ring, L_equityholders_contagion_array_ring = compute_systemic_risk_metrics(l_rc, c_rc, m, W_variants[0], s0_rc, shocked_banks, a_rc)
-        Prb_array_cplt, L_creditors_array_cplt, L_creditors_contagion_array_cplt, L_equityholders_array_cplt, L_equityholders_contagion_array_cplt  = compute_systemic_risk_metrics(l_rc, c_rc, m, W_variants[1], s0_rc, shocked_banks, a_rc)
-        Prb_array_cp, L_creditors_array_cp, L_creditors_contagion_array_cp, L_equityholders_array_cp, L_equityholders_contagion_array_cp  = compute_systemic_risk_metrics(l_cp, c_cp, m, W_variants[2], s0_cp, shocked_banks, a_cp)
-        Prb_array_cp_p, L_creditors_array_cp_p, L_creditors_contagion_array_cp_p, L_equityholders_array_cp_p, L_equityholders_contagion_array_cp_p  = compute_systemic_risk_metrics(l_cp, c_cp, m, W_variants[2], s0_cp, shocked_banks_periphery, a_cp_p)
+    W_types = {"ring": W_ring, "core periphery": W_core_periphery, "complete": W_complete, "mixed": W_mixed}
 
-        # Store systemic risk metrics
-        P_total_ring[k, :, :] = Prb_array_ring
-        P_total_complete[k, :, :] = Prb_array_cplt
-        P_total_cp[k, :, :] = Prb_array_cp
-        P_total_cp_p[k, :, :] = Prb_array_cp_p
+    return W_types[type]
 
-        L_creditors_ring[k] = L_creditors_array_ring.mean()
-        L_creditors_complete[k] = L_creditors_array_cplt.mean()
-        L_creditors_cp[k] = L_creditors_array_cp.mean()
-        L_creditors_cp_p[k] = L_creditors_array_cp_p.mean()
 
-        L_creditors_contagion_ring[k] = L_creditors_contagion_array_ring.mean()
-        L_creditors_contagion_complete[k] = L_creditors_contagion_array_cplt.mean()
-        L_creditors_contagion_cp[k] = L_creditors_contagion_array_cp.mean()
-        L_creditors_contagion_cp_p[k] = L_creditors_contagion_array_cp_p.mean()
 
-        L_equityholders_ring[k] = L_equityholders_array_ring.mean()
-        L_equityholders_complete[k] = L_equityholders_array_cplt.mean()
-        L_equityholders_cp[k] = L_equityholders_array_cp.mean()
-        L_equityholders_cp_p[k] = L_equityholders_array_cp_p.mean()
-
-        L_equityholders_contagion_ring[k] = L_equityholders_contagion_array_ring.mean()
-        L_equityholders_contagion_complete[k] = L_equityholders_contagion_array_cplt.mean()
-        L_equityholders_contagion_cp[k] = L_equityholders_contagion_array_cp.mean()
-        L_equityholders_contagion_cp_p[k] = L_equityholders_contagion_array_cp_p.mean()
-        
-        et = time.time()
-
-    return P_total_ring, P_total_complete, P_total_cp, P_total_cp_p, L_creditors_ring, L_creditors_complete, L_creditors_cp, L_creditors_cp_p, \
-        L_creditors_contagion_ring, L_creditors_contagion_complete, L_creditors_contagion_cp, L_creditors_contagion_cp_p, L_equityholders_ring, \
-            L_equityholders_complete, L_equityholders_cp, L_equityholders_cp_p, L_equityholders_contagion_ring, L_equityholders_contagion_complete, \
-                L_equityholders_contagion_cp, L_equityholders_contagion_cp_p
-
-def plot_results_sensitivity(m_range, c_range, effect, single, P_total_ring, P_total_complete, P_total_cp, P_total_cp_p, L_creditors_ring, L_creditors_complete, \
-                             L_creditors_cp, L_creditors_cp_p, L_creditors_contagion_ring, L_creditors_contagion_complete, L_creditors_contagion_cp, \
-                                L_creditors_contagion_cp_p, L_equityholders_ring, L_equityholders_complete, L_equityholders_cp, L_equityholders_cp_p, \
-                                    L_equityholders_contagion_ring, L_equityholders_contagion_complete, L_equityholders_contagion_cp, L_equityholders_contagion_cp_p, save=False):
+def plot_results_sensitivity(m_range, c_range, effect, single, P_total_ring, P_total_complete, P_total_cp, P_total_cp_p, L_creditors_ring, L_creditors_complete, L_creditors_cp, L_creditors_cp_p, \
+        L_creditors_contagion_ring, L_creditors_contagion_complete, L_creditors_contagion_cp, L_creditors_contagion_cp_p, L_creditors_direct_ring, \
+        L_creditors_direct_complete, L_creditors_direct_cp, L_creditors_direct_cp_p, L_equityholders_ring, L_equityholders_complete, L_equityholders_cp, \
+        L_equityholders_cp_p, L_equityholders_contagion_ring, L_equityholders_contagion_complete, L_equityholders_contagion_cp, L_equityholders_contagion_cp_p, \
+        L_equityholders_direct_ring, L_equityholders_direct_complete, L_equityholders_direct_cp, L_equityholders_direct_cp_p, save=False):
     
     # Plot settings
     plt.rc('axes', labelsize=12)       
@@ -656,203 +585,102 @@ def plot_results_sensitivity(m_range, c_range, effect, single, P_total_ring, P_t
     plt.rc('legend', fontsize='small')
 
     # Plot system level metrics
-    plt.plot(m_range if effect == "m" else c_range, L_creditors_ring, linestyle=':')
-    plt.plot(m_range if effect == "m" else c_range, L_creditors_complete, linestyle='-.')
-    plt.plot(m_range if effect == "m" else c_range, L_creditors_cp, linestyle='--')
-    plt.plot(m_range if effect == "m" else c_range, L_creditors_cp_p, linestyle='-')
-    plt.legend(["Ring network", "Complete network", "Star network (core node)", "Star network (periphery node)"], fontsize='small')
-    plt.title("Systemic losses for creditors (total)")
-    plt.xlabel("Conversion rate $m$" if effect == "m" else "Issued convertible debt $c$")
-    plt.ylabel(r'$L_{\mathrm{creditors, total}}$')
+    plt.plot(m_range if effect == "m" else c_range, L_creditors_ring.mean(axis=1), linestyle=':')
+    plt.plot(m_range if effect == "m" else c_range, L_creditors_complete.mean(axis=1), linestyle='-.')
+    plt.plot(m_range if effect == "m" else c_range, L_creditors_cp.mean(axis=1), linestyle='--')
+    plt.plot(m_range if effect == "m" else c_range, L_creditors_cp_p.mean(axis=1), linestyle='-')
+    plt.legend(["Ring network", "Complete network", "Star network (shock c-node)", "Star network (shock p-node)"], fontsize='small')
+    plt.xlabel("Conversion rate $m_{1}$" if effect == "m" else "Issued convertible debt $c_{1}$")
+    plt.ylabel(r'$L_{\mathrm{Creditors}}$')
     plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/losscreditors', bbox_inches="tight", dpi=300) if save else None
     plt.show()
 
-    plt.plot(m_range if effect == "m" else c_range, L_creditors_contagion_ring, linestyle=':')
-    plt.plot(m_range if effect == "m" else c_range, L_creditors_contagion_complete, linestyle='-.')
-    plt.plot(m_range if effect == "m" else c_range, L_creditors_contagion_cp, linestyle='--')
-    plt.plot(m_range if effect == "m" else c_range, L_creditors_contagion_cp_p, linestyle='-')
-    plt.legend(["Ring network", "Complete network", "Star network (core node)", "Star network (periphery node)"], fontsize='small')
-    plt.title("Systemic losses for creditors (due to contagion)")
-    plt.xlabel("Conversion rate $m$" if effect == "m" else "Issued convertible debt $c$")
-    plt.ylabel(r'$L_{\mathrm{creditors, contagion}}$')
+    plt.plot(m_range if effect == "m" else c_range, L_creditors_contagion_ring.mean(axis=1), linestyle=':')
+    plt.plot(m_range if effect == "m" else c_range, L_creditors_contagion_complete.mean(axis=1), linestyle='-.')
+    plt.plot(m_range if effect == "m" else c_range, L_creditors_contagion_cp.mean(axis=1), linestyle='--')
+    plt.plot(m_range if effect == "m" else c_range, L_creditors_contagion_cp_p.mean(axis=1), linestyle='-')
+    plt.legend(["Ring network", "Complete network", "Star network (shock c-node)", "Star network (shock p-node)"], fontsize='small')
+    plt.xlabel("Conversion rate $m_{1}$" if effect == "m" else "Issued convertible debt $c_{1}$")
+    plt.ylabel(r'$L_{\mathrm{CreditorsC}}$')
     plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/losscreditorscontagion', bbox_inches="tight", dpi=300) if save else None
     plt.show()
 
-    plt.plot(m_range if effect == "m" else c_range, L_equityholders_ring, linestyle=':')
-    plt.plot(m_range if effect == "m" else c_range, L_equityholders_complete, linestyle='-.')
-    plt.plot(m_range if effect == "m" else c_range, L_equityholders_cp, linestyle='--')
-    plt.plot(m_range if effect == "m" else c_range, L_equityholders_cp_p, linestyle='-')
-    plt.legend(["Ring network", "Complete network", "Star network (core node)", "Star network (periphery node)"], fontsize='small')
-    plt.title("Systemic losses for equityholders")
-    plt.xlabel("Conversion rate $m$" if effect == "m" else "Issued convertible debt $c$")
-    plt.ylabel(r'$L_{\mathrm{equityholders}}$')
+    plt.plot(m_range if effect == "m" else c_range, L_creditors_direct_ring.mean(axis=1), linestyle=':')
+    plt.plot(m_range if effect == "m" else c_range, L_creditors_direct_complete.mean(axis=1), linestyle='-.')
+    plt.plot(m_range if effect == "m" else c_range, L_creditors_direct_cp.mean(axis=1), linestyle='--')
+    plt.plot(m_range if effect == "m" else c_range, L_creditors_direct_cp_p.mean(axis=1), linestyle='-')
+    plt.legend(["Ring network", "Complete network", "Star network (shock c-node)", "Star network (shock p-node)"], fontsize='small')
+    plt.xlabel("Conversion rate $m_{1}$" if effect == "m" else "Issued convertible debt $c_{1}$")
+    plt.ylabel(r'$L_{\mathrm{CreditorsD}}$')
+    plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/losscreditorsdirect', bbox_inches="tight", dpi=300) if save else None
+    plt.show()
+
+    plt.plot(m_range if effect == "m" else c_range, L_equityholders_ring.mean(axis=1), linestyle=':')
+    plt.plot(m_range if effect == "m" else c_range, L_equityholders_complete.mean(axis=1), linestyle='-.')
+    plt.plot(m_range if effect == "m" else c_range, L_equityholders_cp.mean(axis=1), linestyle='--')
+    plt.plot(m_range if effect == "m" else c_range, L_equityholders_cp_p.mean(axis=1), linestyle='-')
+    plt.legend(["Ring network", "Complete network", "Star network (shock c-node)", "Star network (shock p-node)"], fontsize='small')
+    plt.xlabel("Conversion rate $m_{1}$" if effect == "m" else "Issued convertible debt $c_{1}$")
+    plt.ylabel(r'$L_{\mathrm{EQH}}$')
     plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/lossequityholder', bbox_inches="tight", dpi=300) if save else None
     plt.show()
 
-    plt.plot(m_range if effect == "m" else c_range, L_equityholders_contagion_ring, linestyle=':')
-    plt.plot(m_range if effect == "m" else c_range, L_equityholders_contagion_complete, linestyle='-.')
-    plt.plot(m_range if effect == "m" else c_range, L_equityholders_contagion_cp, linestyle='--')
-    plt.plot(m_range if effect == "m" else c_range, L_equityholders_contagion_cp_p, linestyle='-')
-    plt.legend(["Ring network", "Complete network", "Star network (core node)", "Star network (periphery node)"], fontsize='small')
-    plt.title("Systemic losses for equityholders due to contagion")
-    plt.xlabel("Conversion rate $m$" if effect == "m" else "Issued convertible debt $c$")
-    plt.ylabel(r'$L_{\mathrm{equityholders, contagiion}}$')
+    plt.plot(m_range if effect == "m" else c_range, L_equityholders_contagion_ring.mean(axis=1), linestyle=':')
+    plt.plot(m_range if effect == "m" else c_range, L_equityholders_contagion_complete.mean(axis=1), linestyle='-.')
+    plt.plot(m_range if effect == "m" else c_range, L_equityholders_contagion_cp.mean(axis=1), linestyle='--')
+    plt.plot(m_range if effect == "m" else c_range, L_equityholders_contagion_cp_p.mean(axis=1), linestyle='-')
+    plt.legend(["Ring network", "Complete network", "Star network (shock c-node)", "Star network (shock p-node)"], fontsize='small')
+    plt.xlabel("Conversion rate $m_{1}$" if effect == "m" else "Issued convertible debt $c_{1}$")
+    plt.ylabel(r'$L_{\mathrm{EQHC}}$')
     plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/lossequityholdercontagion', bbox_inches="tight", dpi=300) if save else None
     plt.show()
     
+    plt.plot(m_range if effect == "m" else c_range, L_equityholders_direct_ring.mean(axis=1), linestyle=':')
+    plt.plot(m_range if effect == "m" else c_range, L_equityholders_direct_complete.mean(axis=1), linestyle='-.')
+    plt.plot(m_range if effect == "m" else c_range, L_equityholders_direct_cp.mean(axis=1), linestyle='--')
+    plt.plot(m_range if effect == "m" else c_range, L_equityholders_direct_cp_p.mean(axis=1), linestyle='-')
+    plt.legend(["Ring network", "Complete network", "Star network (shock c-node)", "Star network (shock p-node)"], fontsize='small')
+    plt.xlabel("Conversion rate $m_{1}$" if effect == "m" else "Issued convertible debt $c_{1}$")
+    plt.ylabel(r'$L_{\mathrm{EQHD}}$')
+    plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/lossequityholderdirect', bbox_inches="tight", dpi=300) if save else None
+    plt.show()
+
     # Plot probability metrics
     colors=['#6A1C1C', '#DAA520', '#006400', '#000080']
     for i in range(P_total_cp.shape[2]):
         plt.stackplot(m_range if effect == "m" else c_range, P_total_ring[:, :, i].T, colors=colors, alpha=0.75)
         plt.legend(["Bankrupt", "Conversion", "Healthy"] if single else ["Bankrupt", "Conversion Low", "Conversion High", "Healthy"]) 
-        plt.title(f"Probability of bank {i+1} being in B, C and H (ring network)" if single else f"Probability of bank {i+1} being in B, CL, CH and H (ring network)")
-        plt.xlabel("Conversion rate $m$" if effect == "m" else "Issued convertible debt $c$")
+        plt.title(f"Probability of bank {i+1} being in B, C and H (ring)" if single else f"Probability of bank {i+1} being in B, CL, CH and H (ring)")
+        plt.xlabel("Conversion rate $m_{1}$" if effect == "m" else "Issued convertible debt $c_{1}$")
         plt.ylabel("Probability (cumulative)")
         plt.savefig(rf'/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/prbbank{i+1}ring', bbox_inches="tight", dpi=300) if save else None
         plt.show()
 
         plt.stackplot(m_range if effect == "m" else c_range, P_total_complete[:, :, i].T, colors=colors, alpha=0.75)
         plt.legend(["Bankrupt", "Conversion", "Healthy"] if single else ["Bankrupt", "Conversion Low", "Conversion High", "Healthy"]) 
-        plt.title(f"Probability of bank {i+1} being in B, C and H (complete network)" if single else f"Probability of bank {i+1} being in B, CL, CH and H (complete network)")
-        plt.xlabel("Conversion rate $m$" if effect == "m" else "Issued convertible debt $c$")
+        plt.title(f"Probability of bank {i+1} being in B, C and H (complete)" if single else f"Probability of bank {i+1} being in B, CL, CH and H (complete)")
+        plt.xlabel("Conversion rate $m_{1}$" if effect == "m" else "Issued convertible debt $c_{1}$")
         plt.ylabel("Probability (cumulative)")
         plt.savefig(rf'/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/prbbank{i+1}complete', bbox_inches="tight", dpi=300) if save else None
         plt.show()
 
         plt.stackplot(m_range if effect == "m" else c_range, P_total_cp[:, :, i].T, colors=colors, alpha=0.75)
         plt.legend(["Bankrupt", "Conversion", "Healthy"] if single else ["Bankrupt", "Conversion Low", "Conversion High", "Healthy"]) 
-        plt.title(f"Probability of bank {i+1} being in B, C and H (star network, core node)" if single else f"Probability of bank {i+1} being in B, CL, CH and H (star network, core node)")
-        plt.xlabel("Conversion rate $m$" if effect == "m" else "Issued convertible debt $c$")
+        plt.title(f"Probability of bank {i+1} being in B, C and H (star network, shock c)" if single else f"Probability of bank {i+1} being in B, CL, CH and H (star network, shock c)")
+        plt.xlabel("Conversion rate $m_{1}$" if effect == "m" else "Issued convertible debt $c_{1}$")
         plt.ylabel("Probability (cumulative)")
         plt.savefig(rf'/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/prbbank{i+1}coreperiphery', bbox_inches="tight", dpi=300) if save else None
         plt.show()
 
         plt.stackplot(m_range if effect == "m" else c_range, P_total_cp_p[:, :, i].T, colors=colors, alpha=0.75)
         plt.legend(["Bankrupt", "Conversion", "Healthy"] if single else ["Bankrupt", "Conversion Low", "Conversion High", "Healthy"]) 
-        plt.title(f"Probability of bank {i+1} being in B, C and H (star network, periphery node)" if single else f"Probability of bank {i+1} being in B, CL, CH and H (star network, periphery node)")
-        plt.xlabel("Conversion rate $m$" if effect == "m" else "Issued convertible debt $c$")
+        plt.title(f"Probability of bank {i+1} being in B, C and H (star network, shock p)" if single else f"Probability of bank {i+1} being in B, CL, CH and H (star network, shock p)")
+        plt.xlabel("Conversion rate $m_{1}$" if effect == "m" else "Issued convertible debt $c_{1}$")
         plt.ylabel("Probability (cumulative)")
         plt.savefig(rf'/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/prbbank{i+1}coreperiphery_p', bbox_inches="tight", dpi=300) if save else None
         plt.show()
     
-    return 
-
-
-def compute_sensitivity_contract_parameters_multitranch(n, W_variants, zeta, xi, core_banks, shocked_banks, shocked_banks_periphery, b_rc, b_cp, X_shock, m_range, c_range, effect):
-    P_total_ring = np.zeros((m_range.shape[0], 4, n))
-    P_total_complete = np.zeros((m_range.shape[0], 4, n))
-    P_total_cp = np.zeros((m_range.shape[0], 4, n))
-    P_total_cp_p = np.zeros((m_range.shape[0], 4, n))
-
-    L_creditors_ring = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_creditors_complete = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_creditors_cp = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_creditors_cp_p = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-
-    L_creditors_contagion_ring = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_creditors_contagion_complete = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_creditors_contagion_cp = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_creditors_contagion_cp_p = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-
-    L_equityholders_ring = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_equityholders_complete = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_equityholders_cp = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_equityholders_cp_p = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-
-    L_equityholders_contagion_ring = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_equityholders_contagion_complete = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_equityholders_contagion_cp = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-    L_equityholders_contagion_cp_p = np.zeros((m_range.shape[0] if effect == "m" else c_range.shape[0], 1))
-
-    st = time.time()
-    et = time.time()
-    for k, x in enumerate(m_range if effect == "m" else c_range):
-        print(f"Iteration {k}/{m_range.shape[0]}, elapsed time: {np.round(et-st,2)} seconds", end='\r')
-       
-        # Determine parameters based on chosen effect
-        if effect == "m": 
-            m_total = np.ones(n) * x
-            c_total = np.ones(n) * 12
-
-        elif effect == "c": 
-            m_total = np.ones(n) 
-            c_total = np.ones(n) * x
-
-        else:
-            raise Exception("No valid effect chosen. Calculation stops")
-
-        m_low = np.round(m_total * (1 - xi), 6)
-        m_high = np.round(m_total * xi, 6)
-        c_low = np.round(c_total * (1 - zeta), 6)
-        c_high = np.round(c_total * zeta, 6)
-
-        c_low_cp = c_total * (1 - zeta)
-        c_high_cp = c_total * zeta
-        c_low_cp[core_banks] *= (n - len(core_banks))
-        c_high_cp[core_banks] *= (n - len(core_banks))
-        c_low_cp = np.round(c_low_cp, 6)
-        c_high_cp = np.round(c_high_cp, 6)
-
-        l_low = np.round(c_low / m_low, 6)
-        l_high = np.round(c_high / m_high, 6)
-        l_low_cp = np.round(c_low_cp / m_low, 6)
-        l_high_cp = np.round(c_high_cp / m_high, 6)
-
-        l_rc = np.vstack((l_high, l_low)).T
-        l_cp = np.vstack((l_high_cp, l_low_cp)).T
-        m = np.vstack((m_high, m_low)).T
-        c_rc = np.vstack((c_high, c_low)).T
-        c_cp = np.vstack((c_high_cp, c_low_cp)).T
-
-        # Compute initial assets and shocked assets
-        a_rc = np.tile(l_high + c_high + c_low - np.matmul(W_variants[0], c_high) - np.matmul(W_variants[0], c_low) + b_rc, (X_shock.shape[0], 1))
-        a_cp = np.tile(l_high_cp + c_high_cp + c_low_cp - np.matmul(W_variants[2], c_high_cp) - np.matmul(W_variants[2], c_low_cp) + b_cp, (X_shock.shape[0], 1)) 
-        a_cp_p = np.tile(l_high_cp + c_high_cp + c_low_cp - np.matmul(W_variants[2], c_high_cp) - np.matmul(W_variants[2], c_low_cp) + b_cp, (X_shock.shape[0], 1)) 
-
-        a_rc[:, shocked_banks] = np.minimum(X_shock, a_rc[:, shocked_banks])
-        a_cp[:, shocked_banks] = np.minimum(X_shock * (n-1), a_cp[:, shocked_banks])
-        a_cp_p[:, shocked_banks_periphery] = np.minimum(X_shock, a_cp_p[:, shocked_banks_periphery])
-        s0_rc = l_high + b_rc
-        s0_cp = l_high_cp + b_cp
-
-        # Compute systemic risk metrics        
-        Prb_array_ring, L_creditors_array_ring, L_creditors_contagion_array_ring, L_equityholders_array_ring, L_equityholders_contagion_array_ring = compute_systemic_risk_metrics_multitranch(l_rc, c_rc, m,  np.tile(W_variants[0], (2, 1, 1)), s0_rc, shocked_banks, a_rc)
-        Prb_array_cplt, L_creditors_array_cplt, L_creditors_contagion_array_cplt, L_equityholders_array_cplt, L_equityholders_contagion_array_cplt  = compute_systemic_risk_metrics_multitranch(l_rc, c_rc, m, np.tile(W_variants[1], (2, 1, 1)), s0_rc, shocked_banks, a_rc)
-        Prb_array_cp, L_creditors_array_cp, L_creditors_contagion_array_cp, L_equityholders_array_cp, L_equityholders_contagion_array_cp = compute_systemic_risk_metrics_multitranch(l_cp, c_cp, m, np.tile(W_variants[2], (2, 1, 1)), s0_cp, shocked_banks, a_cp)
-        Prb_array_cp_p, L_creditors_array_cp_p, L_creditors_contagion_array_cp_p, L_equityholders_array_cp_p, L_equityholders_contagion_array_cp_p = compute_systemic_risk_metrics_multitranch(l_cp, c_cp, m, np.tile(W_variants[2], (2, 1, 1)), s0_cp, shocked_banks_periphery, a_cp_p)
-
-        # Store systemic risk metrics
-        P_total_ring[k, :, :] = Prb_array_ring
-        P_total_complete[k, :, :] = Prb_array_cplt
-        P_total_cp[k, :, :] = Prb_array_cp
-        P_total_cp_p[k, :, :] = Prb_array_cp_p
-
-        L_creditors_ring[k] = L_creditors_array_ring.mean()
-        L_creditors_complete[k] = L_creditors_array_cplt.mean()
-        L_creditors_cp[k] = L_creditors_array_cp.mean()
-        L_creditors_cp_p[k] = L_creditors_array_cp_p.mean()
-
-        L_creditors_contagion_ring[k] = L_creditors_contagion_array_ring.mean()
-        L_creditors_contagion_complete[k] = L_creditors_contagion_array_cplt.mean()
-        L_creditors_contagion_cp[k] = L_creditors_contagion_array_cp.mean()
-        L_creditors_contagion_cp_p[k] = L_creditors_contagion_array_cp_p.mean()
-
-        L_equityholders_ring[k] = L_equityholders_array_ring.mean()
-        L_equityholders_complete[k] = L_equityholders_array_cplt.mean()
-        L_equityholders_cp[k] = L_equityholders_array_cp.mean()
-        L_equityholders_cp_p[k] = L_equityholders_array_cp_p.mean()
-
-        L_equityholders_contagion_ring[k] = L_equityholders_contagion_array_ring.mean()
-        L_equityholders_contagion_complete[k] = L_equityholders_contagion_array_cplt.mean()
-        L_equityholders_contagion_cp[k] = L_equityholders_contagion_array_cp.mean()
-        L_equityholders_contagion_cp_p[k] = L_equityholders_contagion_array_cp_p.mean()
-        
-        et = time.time()
-
-    return P_total_ring, P_total_complete, P_total_cp, P_total_cp_p, L_creditors_ring, L_creditors_complete, L_creditors_cp, L_creditors_cp_p, \
-        L_creditors_contagion_ring, L_creditors_contagion_complete, L_creditors_contagion_cp, L_creditors_contagion_cp_p, L_equityholders_ring, \
-            L_equityholders_complete, L_equityholders_cp, L_equityholders_cp_p, L_equityholders_contagion_ring, L_equityholders_contagion_complete, \
-                L_equityholders_contagion_cp, L_equityholders_contagion_cp_p
+    return 0
 
 
 def simulate_shocks_correlated(n_shocks, beta, rho):
@@ -879,10 +707,13 @@ def simulate_shocks_correlated(n_shocks, beta, rho):
 
     return X_shock
 
-def import_weight_matrices_R(filename):
+def import_weight_matrices_R(filename, num_matrices=10):
     W_collection = []
-    for i in range(10):
-        path = filename + rf"_{i+1}.csv"
+    for i in range(num_matrices):
+        if num_matrices > 1:
+            path = filename + rf"_{i+1}.csv"
+        else:
+            path = filename
         W_matrix_i = pd.read_csv(path, index_col=0).to_numpy()
         W_matrix_i_normalized = W_matrix_i / np.sum(W_matrix_i, axis=0)
         W_collection.append(W_matrix_i_normalized)
