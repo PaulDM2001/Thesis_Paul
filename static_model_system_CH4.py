@@ -27,7 +27,7 @@ fraction_bankrupt_array = np.zeros((gamma_INT_range.shape[0], m_range.shape[0], 
 fraction_converting_array = np.zeros((gamma_INT_range.shape[0], m_range.shape[0], len(W_matrices_GV_cp)))
 fraction_healthy_array = np.zeros((gamma_INT_range.shape[0], m_range.shape[0], len(W_matrices_GV_cp)))
 
-compute_results = True
+compute_results = False
 EXT_CoCo = False                    # external debt CoCo-ized or not
 
 # Compute stock prices and sets when there is no CoCo-ization
@@ -127,7 +127,7 @@ if filename == 'Results_4_EBA_external_CoCo_RecRate':
     plt.ylabel(r"Optimal value of $\gamma$")
     plt.show()
 
-plotting = True if filename != 'Results_4_EBA_external_CoCo_RecRate' else False
+plotting = False if filename != 'Results_4_EBA_external_CoCo_RecRate' else False
 save = False
 if plotting: 
     # Plot settings
@@ -239,9 +239,9 @@ def compute_metrics_scenario(n, m, W_matrices, scenario_gamma, scenarios_X):
     c = dataset_EBA["Total Interbank Liabilities"].to_numpy() * scenario_gamma["gamma_internal"] + dataset_EBA["Total External Liabilities"].to_numpy() * scenario_gamma["gamma_external"]
     l = c / m   
     correction_factor_W = (dataset_EBA["Total Interbank Liabilities"].to_numpy() * scenario_gamma["gamma_internal"] ) / c if sum(c) != 0 else 0
-    R_rate = 1/2
+    R_rate = 1/3
 
-    for w in range(1): #range(len(W_matrices)):
+    for w in range(len(W_matrices)):
         print(f"Iteration {w}/{len(W_matrices)}", end='\r')
         W_matrix_corrected = W_matrices[w] * correction_factor_W
         for k, X in enumerate(scenarios_X): 
@@ -279,29 +279,29 @@ if compute_results:
     V_CoCo_debt_array_fullINTfullEXT, V_ext_array_fullINTfullEXT, V_Equity_array_fullINTfullEXT, Bankrupt_proportion_array_fullINTfullEXT, Converting_proportion_array_fullINTfullEXT, Healthy_proportion_array_fullINTfullEXT= compute_metrics_scenario(n, m, W_matrices_GV_cp, fullIntfullExt_CoCo_ization, X_shock_range)
 
 save_results = False
-load_results = False
+load_results = True
 if save_results:
-    with open('Results_CH4_EBAdataset_varyShock', 'wb') as f:
+    with open('Analysis EBA/Results_CH4_EBAdataset_varyShock_lowerR', 'wb') as f:
         pickle.dump([V_CoCo_debt_array_weakINT, V_ext_array_weakINT, V_Equity_array_weakINT, Bankrupt_proportion_array_weakINT, Converting_proportion_array_weakINT, Healthy_proportion_array_weakINT,
                      V_CoCo_debt_array_fullINT, V_ext_array_fullINT, V_Equity_array_fullINT, Bankrupt_proportion_array_fullINT, Converting_proportion_array_fullINT, Healthy_proportion_array_fullINT,
                      V_CoCo_debt_array_fullINTweakEXT, V_ext_array_fullINTweakEXT, V_Equity_array_fullINTweakEXT, Bankrupt_proportion_array_fullINTweakEXT, Converting_proportion_array_fullINTweakEXT, Healthy_proportion_array_fullINTweakEXT,
                      V_CoCo_debt_array_fullINTfullEXT, V_ext_array_fullINTfullEXT, V_Equity_array_fullINTfullEXT, Bankrupt_proportion_array_fullINTfullEXT, Converting_proportion_array_fullINTfullEXT, Healthy_proportion_array_fullINTfullEXT], f)
-if load_results:
-    with open('Results_CH4_EBAdataset_varyShock', 'rb') as f: 
+elif load_results:
+    with open('Analysis EBA/Results_CH4_EBAdataset_varyShock_lowerR', 'rb') as f: 
         V_CoCo_debt_array_weakINT, V_ext_array_weakINT, V_Equity_array_weakINT, Bankrupt_proportion_array_weakINT, Converting_proportion_array_weakINT, Healthy_proportion_array_weakINT, V_CoCo_debt_array_fullINT, V_ext_array_fullINT, V_Equity_array_fullINT, Bankrupt_proportion_array_fullINT, Converting_proportion_array_fullINT, Healthy_proportion_array_fullINT, V_CoCo_debt_array_fullINTweakEXT, V_ext_array_fullINTweakEXT, V_Equity_array_fullINTweakEXT, Bankrupt_proportion_array_fullINTweakEXT, Converting_proportion_array_fullINTweakEXT, Healthy_proportion_array_fullINTweakEXT, V_CoCo_debt_array_fullINTfullEXT, V_ext_array_fullINTfullEXT, V_Equity_array_fullINTfullEXT, Bankrupt_proportion_array_fullINTfullEXT, Converting_proportion_array_fullINTfullEXT, Healthy_proportion_array_fullINTfullEXT = pickle.load(f)
 
-plotting = False
+plotting = True
 save_plots = True
 if plotting:
-    plt.plot(X_shock_range, V_CoCo_debt_array_weakINT.mean(axis=1))
-    plt.plot(X_shock_range, V_CoCo_debt_array_fullINT.mean(axis=1))
-    plt.plot(X_shock_range, V_CoCo_debt_array_fullINTweakEXT.mean(axis=1))
-    plt.plot(X_shock_range, V_CoCo_debt_array_fullINTfullEXT.mean(axis=1))
-    plt.legend(["Weak interbank", "Full interbank", "Full int., weak external", "Full int. and ext."])
-    plt.xlabel("Shock $X$")
-    plt.ylabel(r"$V_{\mathrm{creditors}}$")
-    plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/EBAVCreditor', bbox_inches="tight", dpi=300) if save_plots else None
-    plt.show()
+    # plt.plot(X_shock_range, V_CoCo_debt_array_weakINT.mean(axis=1))
+    # plt.plot(X_shock_range, V_CoCo_debt_array_fullINT.mean(axis=1))
+    # plt.plot(X_shock_range, V_CoCo_debt_array_fullINTweakEXT.mean(axis=1))
+    # plt.plot(X_shock_range, V_CoCo_debt_array_fullINTfullEXT.mean(axis=1))
+    # plt.legend(["Weak interbank", "Full interbank", "Full int., weak external", "Full int. and ext."])
+    # plt.xlabel("Shock $X$")
+    # plt.ylabel(r"$V_{\mathrm{creditors}}$")
+    # plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/EBAVCreditor', bbox_inches="tight", dpi=300) if save_plots else None
+    # plt.show()
 
     plt.plot(X_shock_range, V_ext_array_weakINT.mean(axis=1))
     plt.plot(X_shock_range, V_ext_array_fullINT.mean(axis=1))
@@ -310,45 +310,45 @@ if plotting:
     plt.legend(["Weak interbank", "Full interbank", "Full int., weak external", "Full int. and ext."])
     plt.xlabel("Shock $X$")
     plt.ylabel(r"$V_{\mathrm{ext.creditors}}$")
-    plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/EBAVextCreditors', bbox_inches="tight", dpi=300) if save_plots else None
+    plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/EBAVextCreditors_lowerR', bbox_inches="tight", dpi=300) if save_plots else None
     plt.show()
 
-    plt.plot(X_shock_range, V_Equity_array_weakINT.mean(axis=1))
-    plt.plot(X_shock_range, V_Equity_array_fullINT.mean(axis=1))
-    plt.plot(X_shock_range, V_Equity_array_fullINTweakEXT.mean(axis=1))
-    plt.plot(X_shock_range, V_Equity_array_fullINTfullEXT.mean(axis=1))
-    plt.legend(["Weak interbank", "Full interbank", "Full int., weak external", "Full int. and ext."])
-    plt.xlabel("Shock $X$")
-    plt.ylabel(r"$V_{\mathrm{eq.holders}}$")
-    plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/EBAVEQH', bbox_inches="tight", dpi=300) if save_plots else None
-    plt.show()
+    # plt.plot(X_shock_range, V_Equity_array_weakINT.mean(axis=1))
+    # plt.plot(X_shock_range, V_Equity_array_fullINT.mean(axis=1))
+    # plt.plot(X_shock_range, V_Equity_array_fullINTweakEXT.mean(axis=1))
+    # plt.plot(X_shock_range, V_Equity_array_fullINTfullEXT.mean(axis=1))
+    # plt.legend(["Weak interbank", "Full interbank", "Full int., weak external", "Full int. and ext."])
+    # plt.xlabel("Shock $X$")
+    # plt.ylabel(r"$V_{\mathrm{eq.holders}}$")
+    # plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/EBAVEQH', bbox_inches="tight", dpi=300) if save_plots else None
+    # plt.show()
 
-    plt.plot(X_shock_range, Bankrupt_proportion_array_weakINT.mean(axis=1))
-    plt.plot(X_shock_range, Bankrupt_proportion_array_fullINT.mean(axis=1))
-    plt.plot(X_shock_range, Bankrupt_proportion_array_fullINTweakEXT.mean(axis=1)) 
-    plt.plot(X_shock_range, Bankrupt_proportion_array_fullINTfullEXT.mean(axis=1)) 
-    plt.legend(["Weak interbank", "Full interbank", "Full int., weak external", "Full int. and ext."])
-    plt.xlabel("Shock $X$")
-    plt.ylabel("Fraction of banks defaulting")
-    plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/EBAFD', bbox_inches="tight", dpi=300) if save_plots else None
-    plt.show()
+    # plt.plot(X_shock_range, Bankrupt_proportion_array_weakINT.mean(axis=1))
+    # plt.plot(X_shock_range, Bankrupt_proportion_array_fullINT.mean(axis=1))
+    # plt.plot(X_shock_range, Bankrupt_proportion_array_fullINTweakEXT.mean(axis=1)) 
+    # plt.plot(X_shock_range, Bankrupt_proportion_array_fullINTfullEXT.mean(axis=1)) 
+    # plt.legend(["Weak interbank", "Full interbank", "Full int., weak external", "Full int. and ext."])
+    # plt.xlabel("Shock $X$")
+    # plt.ylabel("Fraction of banks defaulting")
+    # plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/EBAFD', bbox_inches="tight", dpi=300) if save_plots else None
+    # plt.show()
 
-    plt.plot(X_shock_range, Converting_proportion_array_weakINT.mean(axis=1))
-    plt.plot(X_shock_range, Converting_proportion_array_fullINT.mean(axis=1))
-    plt.plot(X_shock_range, Converting_proportion_array_fullINTweakEXT.mean(axis=1))
-    plt.plot(X_shock_range, Converting_proportion_array_fullINTfullEXT.mean(axis=1))
-    plt.legend(["Weak interbank", "Full interbank", "Full int., weak external", "Full int. and ext."])
-    plt.xlabel("Shock $X$")
-    plt.ylabel("Fraction of banks converting")
-    plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/EBAFC', bbox_inches="tight", dpi=300) if save_plots else None
-    plt.show()
+    # plt.plot(X_shock_range, Converting_proportion_array_weakINT.mean(axis=1))
+    # plt.plot(X_shock_range, Converting_proportion_array_fullINT.mean(axis=1))
+    # plt.plot(X_shock_range, Converting_proportion_array_fullINTweakEXT.mean(axis=1))
+    # plt.plot(X_shock_range, Converting_proportion_array_fullINTfullEXT.mean(axis=1))
+    # plt.legend(["Weak interbank", "Full interbank", "Full int., weak external", "Full int. and ext."])
+    # plt.xlabel("Shock $X$")
+    # plt.ylabel("Fraction of banks converting")
+    # plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/EBAFC', bbox_inches="tight", dpi=300) if save_plots else None
+    # plt.show()
 
-    plt.plot(X_shock_range, Healthy_proportion_array_weakINT.mean(axis=1))
-    plt.plot(X_shock_range, Healthy_proportion_array_fullINT.mean(axis=1))
-    plt.plot(X_shock_range, Healthy_proportion_array_fullINTweakEXT.mean(axis=1))
-    plt.plot(X_shock_range, Healthy_proportion_array_fullINTfullEXT.mean(axis=1))
-    plt.legend(["Weak interbank", "Full interbank", "Full int., weak external", "Full int. and ext."])
-    plt.xlabel("Shock $X$")
-    plt.ylabel("Fraction of banks remaining healthy")
-    plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/EBAFH', bbox_inches="tight", dpi=300) if save_plots else None
-    plt.show()
+    # plt.plot(X_shock_range, Healthy_proportion_array_weakINT.mean(axis=1))
+    # plt.plot(X_shock_range, Healthy_proportion_array_fullINT.mean(axis=1))
+    # plt.plot(X_shock_range, Healthy_proportion_array_fullINTweakEXT.mean(axis=1))
+    # plt.plot(X_shock_range, Healthy_proportion_array_fullINTfullEXT.mean(axis=1))
+    # plt.legend(["Weak interbank", "Full interbank", "Full int., weak external", "Full int. and ext."])
+    # plt.xlabel("Shock $X$")
+    # plt.ylabel("Fraction of banks remaining healthy")
+    # plt.savefig('/Users/pauldemoor/Documents/MSc QFAS/MSc QFAS 2024-2025 thesis/Code/images/EBAFH', bbox_inches="tight", dpi=300) if save_plots else None
+    # plt.show()

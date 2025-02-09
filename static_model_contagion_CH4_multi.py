@@ -36,7 +36,7 @@ m_range = np.linspace(0.0, 5.0, 51)
 m_range[0] = 0.01
 c_range = np.linspace(0.0, 50, 51) + 1e-3
 c_range[0] = 0.01         
-effect = "m"
+effect = "c"
 
 def compute_systemic_risk_metrics_multitranch(l, c, m, W, s_initial, shocked_banks, a_simulations):
     B_array = np.zeros((a_simulations.shape[0], a_simulations.shape[1]))
@@ -271,7 +271,7 @@ if new_computation:
         L_equityholders_direct_ring, L_equityholders_direct_complete, L_equityholders_direct_cp, L_equityholders_direct_cp_p  = compute_sensitivity_contract_parameters_multitranch(n, W_variants, zeta, zeta_cp_p, xi, xi_cp_p, core_banks, shocked_banks, shocked_banks_periphery, X_shock, m_range, c_range, effect)
 
 save_results = False
-load_results = False
+load_results = True
 if save_results:
     with open('Analysis contagion/Results_4_contagion_multi_c_1000sim', 'wb') as f:
         pickle.dump([P_total_ring, P_total_complete, P_total_cp, P_total_cp_p, L_creditors_ring, L_creditors_complete, L_creditors_cp, L_creditors_cp_p, \
@@ -288,7 +288,7 @@ if load_results:
         L_equityholders_cp_p, L_equityholders_contagion_ring, L_equityholders_contagion_complete, L_equityholders_contagion_cp, L_equityholders_contagion_cp_p, \
         L_equityholders_direct_ring, L_equityholders_direct_complete, L_equityholders_direct_cp, L_equityholders_direct_cp_p = pickle.load(f)
 
-plot_results = False
+plot_results = True
 single = False
 if plot_results:
     plot_results_sensitivity(m_range, c_range, effect, single, P_total_ring, P_total_complete, P_total_cp, P_total_cp_p, L_creditors_ring, L_creditors_complete, L_creditors_cp, L_creditors_cp_p, \
@@ -300,7 +300,7 @@ if plot_results:
 
 ### COMPARE SINGLE TRANCH TO TWO TRANCH ###
 
-compare_results= True
+compare_results = False
 if compare_results: 
     with open('Analysis contagion/Results_4_contagion_single_c_1000sim', 'rb') as f:
         sP_total_ring, sP_total_complete, sP_total_cp, sP_total_cp_p, sL_creditors_ring, sL_creditors_complete, sL_creditors_cp, sL_creditors_cp_p, \
