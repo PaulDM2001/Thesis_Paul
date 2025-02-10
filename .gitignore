@@ -4,7 +4,6 @@
 /images_m
 
 # Ignore large data and other stuff
-/Data EBA/dataset_EBA_cleaned.csv
 /Data EBA/dataset_EBA.csv
 /Data EBA/old
 /__pycache__
