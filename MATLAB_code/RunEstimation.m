@@ -1,5 +1,6 @@
 %%RUN ESTIMATION ROUTINE
 % Kamil Kladivko for Technical Computing Prague 2007
+% Date: October 2007 
 
 clc
 clear all
@@ -22,19 +23,19 @@ spread_AA = fetch(c, series_spread_AA, startdate, enddate);
 spread_AAA = fetch(c, series_spread_AAA, startdate, enddate);
 close(c)
 
-figure(1)
-hold on 
-plot(base_rate.Data(:, 2)./100)
-plot(spread_BBB.Data(:, 2)./100)
-plot(spread_A.Data(:, 2)./100)
-plot(spread_AA.Data(:, 2)./100)
-plot(spread_AAA.Data(:, 2)./100)
-hold off
+// figure(1)
+// hold on 
+// plot(base_rate.Data(:, 2)./100)
+// plot(spread_BBB.Data(:, 2)./100)
+// plot(spread_A.Data(:, 2)./100)
+// plot(spread_AA.Data(:, 2)./100)
+// plot(spread_AAA.Data(:, 2)./100)
+// hold off
 
 Model.Data = rmmissing(base_rate.Data(:, 2)) ./100;
 Model.TimeStep = 1/250;     % recommended: 1/250 for daily data, 1/12 for monthly data, etc
 Model.Disp = 'y';           % 'y' | 'n' (default: y)
-Model.MatlabDisp = 'off';  % 'off'|'iter'|'notify'|'final'  (default: off)
+Model.MatlabDisp = 'off';   % 'off'|'iter'|'notify'|'final'  (default: off)
 Model.Method = 'besseli';   % 'besseli' | 'ncx2pdf' (default: besseli)
 
 fprintf('Results Base')

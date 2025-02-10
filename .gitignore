@@ -1,16 +1,13 @@
-# Ignore all csv files
-*.csv
-
 # Ignore all images
 /images
 /images_c
 /images_m
 
-# Ignore results
-/results_CH4
-
-# Ignore data
-/Data EBA
-/results_CH4
+# Ignore large data and other stuff
+/Data EBA/dataset_EBA_cleaned.csv
+/Data EBA/dataset_EBA.csv
+/Data EBA/old
 /__pycache__
 /Analysis ABT2/Scenarios
+/terminal_outputs/*
+/test.py
